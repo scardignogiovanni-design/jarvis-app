@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Jarvis"/>
+  <meta name="theme-color" content="#020b18"/>
+  <link rel="apple-touch-icon" href="/icons/icon-192.png"/>
+  <link rel="manifest" href="/manifest.json"/>
+  <title>J.A.R.V.I.S</title>
+
+  <!-- Dependencies in correct order -->
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.10.0/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.3/babel.min.js"></script>
+
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#020b18;min-height:100vh}
+    #root{min-height:100vh}
+    #loading{
+      position:fixed;inset:0;background:#020b18;
+      display:flex;flex-direction:column;
+      align-items:center;justify-content:center;
+      color:#00d4ff;font-family:'Share Tech Mono',monospace;
+      gap:20px;z-index:9999;
+    }
+    .arc{
+      width:64px;height:64px;border-radius:50%;
+      border:2px solid rgba(0,212,255,0.15);
+      border-top:2px solid #00d4ff;
+      animation:spin 1s linear infinite;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .load-text{font-size:12px;letter-spacing:0.25em;animation:pulse 2s ease-in-out infinite}
+    @keyframes pulse{0%,100%{opacity:0.5}50%{opacity:1}}
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <div class="arc"></div>
+    <div class="load-text">INIZIALIZZAZIONE JARVIS...</div>
+  </div>
+  <div id="root"></div>
+
+  <script>
+    // Safety check - verify all deps loaded
+    window.addEventListener('load', function() {
+      if (!window.React) { showError('React non caricato'); return; }
+      if (!window.Recharts) { showError('Recharts non caricato'); return; }
+    });
+    function showError(msg) {
+      document.getElementById('loading').innerHTML = 
+        '<div style="color:#ff6b35;text-align:center;padding:30px;font-family:monospace">' +
+        '<div style="font-size:32px;margin-bottom:16px">⚠</div>' +
+        '<div style="font-size:14px;letter-spacing:0.1em">ERRORE DI AVVIO</div>' +
+        '<div style="font-size:11px;margin-top:10px;color:#888;max-width:300px">' + msg + '</div>' +
+        '</div>';
+    }
+    window.__appReady = function() {
+      var loading = document.getElementById('loading');
+      if (loading) loading.style.display = 'none';
+    };
+  </script>
+
+  <script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } = Recharts;
+
+// ─── STORAGE ─────────────────────────────────────────────────────────────────
+const S = {
+  get: (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+// ─── DEFAULTS ────────────────────────────────────────────────────────────────
+const DEFAULT_MODULES = [
+  { id: "salute", name: "Salute", icon: "🏃", color: "#10b981", theme: "#d1fae5", fields: [
+    { id: "peso", label: "Peso (kg)", type: "number" },
+    { id: "sonno", label: "Ore di sonno", type: "number" },
+    { id: "allenamento", label: "Allenamento", type: "boolean" },
+    { id: "umore", label: "Umore (1-10)", type: "scale" },
+    { id: "note", label: "Note", type: "text" }
+  ]},
+  { id: "finanze", name: "Finanze", icon: "💰", color: "#3b82f6", theme: "#dbeafe", fields: [
+    { id: "entrate", label: "Entrate (€)", type: "number" },
+    { id: "uscite", label: "Uscite (€)", type: "number" },
+    { id: "risparmio", label: "Risparmio (€)", type: "number" },
+    { id: "categoria", label: "Categoria spesa", type: "text" },
+    { id: "note", label: "Note", type: "text" }
+  ]},
+  { id: "obiettivi", name: "Obiettivi", icon: "🎯", color: "#f59e0b", theme: "#fef3c7", fields: [
+    { id: "obiettivo", label: "Obiettivo", type: "text" },
+    { id: "progresso", label: "Progresso (%)", type: "number" },
+    { id: "scadenza", label: "Scadenza", type: "text" },
+    { id: "completato", label: "Completato", type: "boolean" },
+    { id: "note", label: "Note", type: "text" }
+  ]},
+  { id: "lavoro", name: "Lavoro", icon: "💼", color: "#8b5cf6", theme: "#ede9fe", fields: [
+    { id: "produttivita", label: "Produttività (1-10)", type: "scale" },
+    { id: "ore", label: "Ore lavorate", type: "number" },
+    { id: "task_completati", label: "Task completati", type: "number" },
+    { id: "stress", label: "Livello stress (1-10)", type: "scale" },
+    { id: "note", label: "Note", type: "text" }
+  ]},
+  { id: "documenti", name: "Documenti", icon: "📄", color: "#ec4899", theme: "#fce7f3", fields: [
+    { id: "titolo", label: "Titolo documento", type: "text" },
+    { id: "categoria", label: "Categoria", type: "text" },
+    { id: "contenuto", label: "Contenuto estratto", type: "text" },
+    { id: "data_doc", label: "Data documento", type: "text" }
+  ]}
+];
+
+const MISSIONS_POOL = [
+  "Registra i tuoi dati ogni giorno per 7 giorni",
+  "Raggiungi uno score medio di 70+ questa settimana",
+  "Completa almeno 3 obiettivi questo mese",
+  "Mantieni le uscite sotto le entrate per 2 settimane",
+  "Registra 5 allenamenti in 7 giorni"
+];
+
+const ICONS = ["⭐","🧠","❤️","🌱","🏠","✈️","📚","🎨","🤝","🧘","🍽️","💡","🎵","🌍","🔬","🏋️","💊","🎯","💰","🏃","🎭","🌿","🏆","🔑","🛡️"];
+const COLORS = ["#6366f1","#10b981","#f59e0b","#ef4444","#ec4899","#8b5cf6","#14b8a6","#f97316","#3b82f6","#84cc16","#06b6d4","#a855f7"];
+
+// ─── UTILITIES ────────────────────────────────────────────────────────────────
+const now = () => new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+const todayStr = () => new Date().toISOString().split("T")[0];
+const todayLong = () => new Date().toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const fmtDate = (iso) => new Date(iso).toLocaleDateString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+// ─── SCORE ENGINE ─────────────────────────────────────────────────────────────
+function calcScore(modId, entries) {
+  if (!entries?.length) return 0;
+  const recent = entries.slice(-7);
+  const count = recent.length;
+  let s = Math.min(count * 10, 40);
+  if (modId === "salute") {
+    const al = recent.filter(e => e.allenamento === "Sì" || e.allenamento === true).length;
+    const um = recent.reduce((a, e) => a + (parseFloat(e.umore) || 0), 0) / count;
+    const so = recent.reduce((a, e) => a + (parseFloat(e.sonno) || 0), 0) / count;
+    s += (al / count) * 20 + (um / 10) * 20 + Math.min(so / 8, 1) * 20;
+  } else if (modId === "finanze") {
+    s += (recent.filter(e => (parseFloat(e.entrate) || 0) > (parseFloat(e.uscite) || 0)).length / count) * 60;
+  } else if (modId === "obiettivi") {
+    s += (recent.reduce((a, e) => a + (parseFloat(e.progresso) || 0), 0) / count / 100) * 60;
+  } else if (modId === "lavoro") {
+    const pr = recent.reduce((a, e) => a + (parseFloat(e.produttivita) || 0), 0) / count;
+    const st = recent.reduce((a, e) => a + (parseFloat(e.stress) || 0), 0) / count;
+    s += (pr / 10) * 30 + ((10 - st) / 10) * 30;
+  } else { s += Math.min(count * 12, 60); }
+  return Math.round(Math.min(s, 100));
+}
+const scoreColor = s => s >= 70 ? "#10b981" : s >= 40 ? "#f59e0b" : "#ef4444";
+const calcCoherence = (modules, allData) => {
+  const scores = modules.map(m => calcScore(m.id, allData[m.id] || []));
+  if (!scores.length) return 0;
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const v = scores.reduce((s, x) => s + Math.abs(x - avg), 0) / scores.length;
+  return Math.round(Math.max(0, avg - v * 0.3));
+};
+
+// ─── REAL TREND DATA ──────────────────────────────────────────────────────────
+function buildTrendData(modId, entries, fieldId) {
+  return entries.slice(-14).map((e, i) => ({
+    i: i + 1,
+    v: parseFloat(e[fieldId]) || 0,
+    date: e._date ? new Date(e._date).toLocaleDateString("it-IT", { day: "numeric", month: "short" }) : `#${i + 1}`
+  })).filter(d => d.v > 0);
+}
+
+// ─── EXPORT ───────────────────────────────────────────────────────────────────
+function exportData(allData, modules, calEvents) {
+  const payload = { exportDate: new Date().toISOString(), modules, data: allData, calendar: calEvents };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `lifeos-backup-${todayStr()}.json`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function exportCSV(modId, entries, modName) {
+  if (!entries.length) return;
+  const keys = Object.keys(entries[0]).filter(k => !k.startsWith("_"));
+  const rows = [["data", ...keys], ...entries.map(e => [e._date ? new Date(e._date).toLocaleDateString("it-IT") : "", ...keys.map(k => e[k] ?? "")])];
+  const csv = rows.map(r => r.join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `${modName}-${todayStr()}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ─── API ──────────────────────────────────────────────────────────────────────
+async function callAPI(system, userMsg, history = [], maxTokens = 1000) {
+  const messages = [...history, { role: "user", content: userMsg }];
+  const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const endpoint = isLocal 
+    ? "https://api.anthropic.com/v1/messages"
+    : "/api/chat";
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages })
+  });
+  const data = await res.json();
+  return data.content?.map(b => b.text || "").join("") || "";
+}
+
+// Haiku - per agenti e insights (20x piu economico)
+async function callAPIFast(system, userMsg, maxTokens = 200) {
+  const isLocal2 = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const endpoint2 = isLocal2 
+    ? "https://api.anthropic.com/v1/messages"
+    : "/api/chat";
+  const res = await fetch(endpoint2, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens, system, messages: [{ role: "user", content: userMsg }] })
+  });
+  const data = await res.json();
+  return data.content?.map(b => b.text || "").join("") || "";
+}
+
+// Batch agenti - raccoglie per 3s poi chiama una volta sola
+const agentQueue = { pending: [], timer: null };
+function queueAgentAnalysis(modName, modIcon, modColor, entries, entry, score, onAlert) {
+  agentQueue.pending.push({ modName, modIcon, modColor, entries, entry, score, onAlert });
+  if (agentQueue.timer) clearTimeout(agentQueue.timer);
+  agentQueue.timer = setTimeout(async () => {
+    const batch = [...agentQueue.pending]; agentQueue.pending = [];
+    if (!batch.length) return;
+    const sys = 'Sei un agente AI. Per ogni modulo analizza e rispondi SOLO con JSON array con campi mod e alert. Solo JSON array.';
+    const prompt = batch.map(b => `${b.modName}: recenti ${JSON.stringify(b.entries.slice(-2))}, nuovo ${JSON.stringify(b.entry)}, score ${b.score}/100`).join(" | ");
+    try {
+      const raw = await callAPIFast(sys, prompt, 300);
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const results = JSON.parse(clean.slice(clean.indexOf("["), clean.lastIndexOf("]") + 1));
+      results.forEach((r, i) => { if (r.alert && r.alert !== "null" && batch[i]) batch[i].onAlert(r.alert); });
+    } catch {}
+  }, 3000);
+}
+
+// ─── VOICE HOOK ───────────────────────────────────────────────────────────────
+function useVoice() {
+  const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [micError, setMicError] = useState(null);
+  const recRef = useRef(null);
+  const analyserRef = useRef(null);
+  const animRef = useRef(null);
+
+  const speak = useCallback((text) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text.slice(0, 260));
+    utt.lang = "it-IT"; utt.rate = 0.92; utt.pitch = 0.88; utt.volume = 1.0;
+    const go = () => {
+      const voices = speechSynthesis.getVoices();
+      const v = voices.find(v => v.lang.startsWith("it") && v.name.toLowerCase().includes("luca"))
+        || voices.find(v => v.lang.startsWith("it"))
+        || voices.find(v => v.lang.startsWith("en-GB"))
+        || voices[0];
+      if (v) utt.voice = v;
+      utt.onstart = () => setSpeaking(true);
+      utt.onend = () => setSpeaking(false);
+      speechSynthesis.speak(utt);
+    };
+    speechSynthesis.getVoices().length ? go() : (speechSynthesis.onvoiceschanged = go);
+  }, []);
+
+  const stopSpeaking = useCallback(() => { window.speechSynthesis?.cancel(); setSpeaking(false); }, []);
+
+  const startListening = useCallback((onResult) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setMicError("Il riconoscimento vocale non è supportato in questo browser. Usa Chrome o Safari."); return false; }
+    setMicError(null);
+    const rec = new SR();
+    rec.lang = "it-IT"; rec.continuous = false; rec.interimResults = true;
+    let finalText = "";
+    rec.onresult = e => {
+      const t = Array.from(e.results).map(r => r[0].transcript).join("");
+      finalText = t;
+      onResult(t, false);
+    };
+    rec.onend = () => { setListening(false); setMicLevel(0); if (finalText) onResult(finalText, true); };
+    rec.onerror = (e) => {
+      setListening(false); setMicLevel(0);
+      if (e.error === "not-allowed") setMicError("Accesso al microfono negato. Controlla le impostazioni del browser.");
+      else if (e.error === "no-speech") setMicError("Nessun audio rilevato. Riprova.");
+      else setMicError(`Errore microfono: ${e.error}`);
+    };
+    recRef.current = rec;
+    rec.start(); setListening(true);
+    return true;
+  }, []);
+
+  const stopListening = useCallback(() => { recRef.current?.stop(); }, []);
+
+  return { listening, speaking, micLevel, micError, speak, stopSpeaking, startListening, stopListening, setMicError };
+}
+
+// ─── ONBOARDING ───────────────────────────────────────────────────────────────
+function Onboarding({ onComplete }) {
+  const [step, setStep] = useState(0);
+  const [profile, setProfile] = useState({ name: "", age: "", goals: "", context: "" });
+  const [selectedAreas, setSelectedAreas] = useState(["salute", "finanze", "obiettivi", "lavoro", "documenti"]);
+  const areas = DEFAULT_MODULES.map(m => ({ id: m.id, name: m.name, icon: m.icon, desc: { salute: "Peso, sonno, sport, umore", finanze: "Entrate, uscite, risparmi", obiettivi: "Traguardi e progressi", lavoro: "Produttività e stress", documenti: "Referti, contratti, buste paga" }[m.id] }));
+
+  const steps = [
+    {
+      title: "Benvenuto nel tuo Life OS",
+      subtitle: "Un sistema che cresce con te nel tempo",
+      content: (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ textAlign: "center", fontSize: 64, marginBottom: 8 }}>⬡</div>
+          <p style={{ color: "#64748b", lineHeight: 1.7, textAlign: "center", fontSize: 15 }}>
+            Questo è il tuo assistente personale — Jarvis — e il tuo Life OS. Insieme tracciano ogni area della tua vita, trovano pattern nel tempo e ti aiutano a prendere decisioni migliori.
+          </p>
+          <p style={{ color: "#94a3b8", fontSize: 13, textAlign: "center" }}>Setup di 2 minuti. Iniziamo.</p>
+        </div>
+      )
+    },
+    {
+      title: "Chi sei?",
+      subtitle: "Jarvis ti conosce meglio, le sue risposte saranno più utili",
+      content: (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[["name","Il tuo nome","es. Marco","text"],["age","Età","es. 32","number"],["goals","Il tuo obiettivo principale","es. Migliorare la salute e controllare le finanze","text"],["context","Professione o contesto di vita","es. Imprenditore, padre di 2 figli","text"]].map(([key, label, ph, type]) => (
+            <div key={key}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 5 }}>{label}</label>
+              <input type={type} placeholder={ph} value={profile[key]} onChange={e => setProfile(p => ({ ...p, [key]: e.target.value }))}
+                style={{ border: "1.5px solid #e2e8f0", borderRadius: 9, padding: "10px 13px", fontSize: 14, fontFamily: "inherit", color: "#1e293b", outline: "none", width: "100%", transition: "border-color 0.15s" }}
+                onFocus={e => e.target.style.borderColor = "#6366f1"} onBlur={e => e.target.style.borderColor = "#e2e8f0"} />
+            </div>
+          ))}
+        </div>
+      )
+    },
+    {
+      title: "Scegli le tue aree di vita",
+      subtitle: "Puoi aggiungerne altre in qualsiasi momento",
+      content: (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {areas.map(a => {
+            const sel = selectedAreas.includes(a.id);
+            return (
+              <div key={a.id} onClick={() => setSelectedAreas(p => sel ? p.filter(x => x !== a.id) : [...p, a.id])}
+                style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 12, border: `2px solid ${sel ? "#6366f1" : "#e2e8f0"}`, background: sel ? "#eef2ff" : "white", cursor: "pointer", transition: "all 0.15s" }}>
+                <span style={{ fontSize: 24 }}>{a.icon}</span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: sel ? "#4f46e5" : "#1e293b" }}>{a.name}</div>
+                  <div style={{ fontSize: 12, color: "#94a3b8" }}>{a.desc}</div>
+                </div>
+                <div style={{ marginLeft: "auto", width: 20, height: 20, borderRadius: "50%", background: sel ? "#6366f1" : "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 12 }}>{sel ? "✓" : ""}</div>
+              </div>
+            );
+          })}
+        </div>
+      )
+    },
+    {
+      title: "Tutto pronto!",
+      subtitle: "Jarvis è operativo",
+      content: (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
+          <div style={{ fontSize: 72 }}>⬡</div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>
+              {profile.name ? `Ciao ${profile.name}!` : "Benvenuto!"}
+            </div>
+            <p style={{ color: "#64748b", lineHeight: 1.7, fontSize: 14 }}>
+              Jarvis è pronto. Parlagli, scrivili, e lui registrerà, analizzerà e ti suggerirà il meglio per ogni area della tua vita.
+            </p>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+            {selectedAreas.map(id => { const m = DEFAULT_MODULES.find(m => m.id === id); return m ? <span key={id} style={{ padding: "4px 12px", borderRadius: 20, background: "#f1f5f9", fontSize: 12, color: "#64748b" }}>{m.icon} {m.name}</span> : null; })}
+          </div>
+        </div>
+      )
+    }
+  ];
+
+  const s = steps[step];
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f0f4f8 0%, #e8edf4 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
+      <div style={{ background: "white", borderRadius: 24, padding: 36, width: "100%", maxWidth: 480, boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
+        {/* Progress */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 28 }}>
+          {steps.map((_, i) => <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= step ? "#6366f1" : "#f1f5f9", transition: "background 0.3s" }} />)}
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 6 }}>{s.title}</div>
+        <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 24 }}>{s.subtitle}</div>
+        <div style={{ marginBottom: 28 }}>{s.content}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {step > 0 && <button onClick={() => setStep(p => p - 1)} style={{ flex: 1, padding: 13, border: "1.5px solid #e2e8f0", borderRadius: 12, background: "white", color: "#64748b", cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>← Indietro</button>}
+          <button onClick={() => {
+            if (step < steps.length - 1) setStep(p => p + 1);
+            else {
+              const mods = DEFAULT_MODULES.filter(m => selectedAreas.includes(m.id));
+              S.set("lifeos_modules", mods);
+              S.set("lifeos_profile", profile);
+              S.set("lifeos_onboarded", true);
+              onComplete(profile, mods);
+            }
+          }} style={{ flex: 2, padding: 13, border: "none", borderRadius: 12, background: "#1e293b", color: "white", cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" }}>
+            {step === steps.length - 1 ? "Inizia →" : "Continua →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+function App() {
+  const [onboarded, setOnboarded] = useState(() => S.get("lifeos_onboarded", false));
+  const [profile, setProfile] = useState(() => S.get("lifeos_profile", {}));
+  const [section, setSection] = useState("jarvis");
+  const [modules, setModules] = useState(() => S.get("lifeos_modules", DEFAULT_MODULES));
+  const [allData, setAllData] = useState(() => S.get("lifeos_data", {}));
+  const [alerts, setAlerts] = useState(() => S.get("lifeos_alerts", []));
+  const [missions, setMissions] = useState(() => S.get("lifeos_missions", []));
+  const [calEvents, setCalEvents] = useState(() => S.get("jarvis_calendar", []));
+  const [jarvisChat, setJarvisChat] = useState(() => S.get("jarvis_chat", []));
+  const [jarvisSessions, setJarvisSessions] = useState(() => S.get("jarvis_sessions", []));
+  const [metaChat, setMetaChat] = useState(() => S.get("lifeos_chat", []));
+  const [activeModule, setActiveModule] = useState(null);
+  const [formData, setFormData] = useState({});
+  const [chatInput, setChatInput] = useState("");
+  const [jarvisInput, setJarvisInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [jarvisLoading, setJarvisLoading] = useState(false);
+  const [jarvisTranscript, setJarvisTranscript] = useState("");
+  const [pendingData, setPendingData] = useState(null);
+  const [showWeekly, setShowWeekly] = useState(false);
+  const [weeklyText, setWeeklyText] = useState("");
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [showAddModule, setShowAddModule] = useState(false);
+  const [showEditModule, setShowEditModule] = useState(null);
+  const [newModule, setNewModule] = useState({ name: "", icon: "⭐", color: "#6366f1", fields: [] });
+  const [newField, setNewField] = useState({ label: "", type: "text" });
+  const [calMonth, setCalMonth] = useState(new Date().getMonth());
+  const [calYear, setCalYear] = useState(new Date().getFullYear());
+  const [calSelDay, setCalSelDay] = useState(new Date().getDate());
+  const [jarvisFocus, setJarvisFocus] = useState(false);
+  const [insights, setInsights] = useState(() => S.get("lifeos_insights", []));
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
+  const [selectedSession, setSelectedSession] = useState(null);
+  const [offlineQueue, setOfflineQueue] = useState(() => S.get("lifeos_offline_queue", []));
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [importRef] = useState(() => ({ current: null }));
+  const chatEndRef = useRef(null);
+  const jarvisEndRef = useRef(null);
+  const voice = useVoice();
+
+  // ── PERSISTENCE ────────────────────────────────────────────────────────────
+  useEffect(() => { S.set("lifeos_modules", modules); }, [modules]);
+  useEffect(() => { S.set("lifeos_data", allData); }, [allData]);
+  useEffect(() => { S.set("lifeos_alerts", alerts); }, [alerts]);
+  useEffect(() => { S.set("lifeos_missions", missions); }, [missions]);
+  useEffect(() => { S.set("jarvis_calendar", calEvents); }, [calEvents]);
+  useEffect(() => { S.set("jarvis_chat", jarvisChat); }, [jarvisChat]);
+  useEffect(() => { S.set("jarvis_sessions", jarvisSessions); }, [jarvisSessions]);
+  useEffect(() => { S.set("lifeos_chat", metaChat); }, [metaChat]);
+  useEffect(() => { S.set("lifeos_insights", insights); }, [insights]);
+  useEffect(() => { S.set("lifeos_offline_queue", offlineQueue); }, [offlineQueue]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [metaChat, loading]);
+  useEffect(() => { jarvisEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [jarvisChat, jarvisLoading]);
+
+  // ── ONLINE/OFFLINE ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onOn = () => { setIsOnline(true); flushOfflineQueue(); };
+    const onOff = () => setIsOnline(false);
+    window.addEventListener("online", onOn);
+    window.addEventListener("offline", onOff);
+    return () => { window.removeEventListener("online", onOn); window.removeEventListener("offline", onOff); };
+  }, []);
+
+  const flushOfflineQueue = useCallback(() => {
+    const q = S.get("lifeos_offline_queue", []);
+    if (!q.length) return;
+    const updated = { ...allData };
+    q.forEach(item => {
+      if (!updated[item.moduleId]) updated[item.moduleId] = [];
+      updated[item.moduleId].push(item.entry);
+    });
+    setAllData(updated);
+    setOfflineQueue([]);
+    S.set("lifeos_offline_queue", []);
+  }, [allData]);
+
+  // ── INIT ───────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (missions.length === 0) setMissions(MISSIONS_POOL.slice(0, 3).map((t, i) => ({ id: i, text: t, done: false })));
+  }, []);
+
+  useEffect(() => {
+    if (onboarded && section === "jarvis" && jarvisChat.length === 0) {
+      const h = new Date().getHours();
+      const g = h < 12 ? "Buongiorno" : h < 18 ? "Buon pomeriggio" : "Buonasera";
+      const name = profile?.name ? ` ${profile.name}` : "";
+      const msg = `${g}${name}! Sono Jarvis, il tuo assistente personale. Sono operativo e connesso al tuo Life OS. Come posso aiutarti oggi?`;
+      setJarvisChat([{ role: "jarvis", text: msg, time: now() }]);
+      voice.speak(msg);
+    }
+  }, [onboarded, section]);
+
+  // ── SESSIONS ───────────────────────────────────────────────────────────────
+  const saveSession = useCallback((chat) => {
+    if (!chat.length) return;
+    const dateKey = new Date().toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
+    const preview = chat[chat.length - 1]?.text || "";
+    setJarvisSessions(prev => {
+      const idx = prev.findIndex(s => s.date === dateKey);
+      const s = { date: dateKey, messages: chat.length, preview, chat: chat.slice(-50), ts: Date.now() };
+      return idx >= 0 ? prev.map((x, i) => i === idx ? s : x) : [s, ...prev].slice(0, 40);
+    });
+  }, []);
+
+  // ── AGENT REASONING ────────────────────────────────────────────────────────
+  const runAgent = useCallback((moduleId, entry) => {
+    const mod = modules.find(m => m.id === moduleId);
+    if (!mod || !isOnline) return;
+    const entries = allData[moduleId] || [];
+    const score = calcScore(moduleId, [...entries, entry]);
+    queueAgentAnalysis(mod.name, mod.icon, mod.color, entries, entry, score, (alertText) => {
+      setAlerts(prev => [{ id: Date.now(), module: mod.name, icon: mod.icon, color: mod.color, text: alertText.trim(), time: now(), read: false }, ...prev].slice(0, 20));
+    });
+  }, [modules, allData, isOnline]);
+
+  const saveEntry = async (moduleId) => {
+    const entry = { ...formData, _date: new Date().toISOString(), _id: Date.now() };
+    if (isOnline) {
+      const updated = { ...allData, [moduleId]: [...(allData[moduleId] || []), entry] };
+      setAllData(updated);
+      runAgent(moduleId, entry);
+    } else {
+      setOfflineQueue(p => [...p, { moduleId, entry }]);
+      alert("📴 Sei offline — il dato è stato salvato localmente e verrà sincronizzato quando torni online.");
+    }
+    setFormData({});
+  };
+
+  // ── INSIGHTS ENGINE ────────────────────────────────────────────────────────
+  const generateInsights = useCallback(async () => {
+    if (!isOnline) return;
+    setInsightsLoading(true);
+    const scores = modules.map(m => `${m.name}=${calcScore(m.id, allData[m.id] || [])}/100`).join(", ");
+    const recentData = modules.map(m => `${m.name}: ${JSON.stringify((allData[m.id] || []).slice(-3))}`).join("\n");
+    const sys = `Sei un analista di dati personali. Trova 3 insight interessanti e concreti. Max 2 frasi ognuno. Italiano. Solo JSON array: [{"title":"...","text":"...","type":"positive|warning|neutral"}]`;
+    try {
+      const raw = await callAPIFast(sys, `Scores: ${scores}\nDati:\n${recentData}`, 600);
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean.slice(clean.indexOf("["), clean.lastIndexOf("]") + 1));
+      setInsights(parsed.map((i, idx) => ({ ...i, id: Date.now() + idx })));
+    } catch {}
+    setInsightsLoading(false);
+  }, [modules, allData, isOnline]);
+
+  // ── JARVIS AI ──────────────────────────────────────────────────────────────
+  const buildJarvisSystem = () => {
+    const scores = modules.map(m => `${m.name}=${calcScore(m.id, allData[m.id] || [])}/100`).join(", ");
+    const recentData = modules.map(m => `${m.name}: ${(allData[m.id] || []).slice(-2).map(e => JSON.stringify(e)).join("; ") || "nessun dato"}`).join("\n");
+    const events = calEvents.slice(-5).map(e => `${e.date} ${e.time || ""}: ${e.title}`).join("; ") || "nessuno";
+    const userCtx = profile?.name ? `Utente: ${profile.name}, ${profile.age ? profile.age + " anni" : ""}, obiettivo: ${profile.goals || ""}, contesto: ${profile.context || ""}` : "";
+    return `Sei Jarvis, l'assistente personale AI. Personalità: professionale, preciso, con umorismo britannico sottile e caldo. Sei un compagno fidato. Tono rilassato e amichevole, come un vecchio amico molto competente. Conosci bene l'utente.
+${userCtx}
+Oggi: ${todayLong()} — ${now()}
+Score Life OS: ${scores}
+Prossimi eventi: ${events}
+Dati recenti:\n${recentData}
+Connessione: ${isOnline ? "ONLINE" : "OFFLINE — non puoi salvare dati, solo conversare"}
+
+Rispondi SEMPRE con JSON valido:
+{
+  "reply": "risposta naturale e calda, max 3-4 frasi",
+  "extractedData": {"modulo": {"campo": "valore"}} oppure {},
+  "calendarEvent": {"date":"YYYY-MM-DD","time":"HH:MM","title":"...","description":"..."} oppure null,
+  "alert": "breve alert se importante" oppure null
+}
+Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa 5km"}}; "speso 80€"→{"finanze":{"uscite":80}}; "dormito 6 ore"→{"salute":{"sonno":6}}; "domani alle 15 dentista"→calendarEvent con data domani`;
+  };
+
+  const processJarvis = async (text) => {
+    const msgs = [...jarvisChat, { role: "user", text, time: now() }];
+    setJarvisChat(msgs); setJarvisLoading(true);
+    try {
+      const history = msgs.slice(-8).map(m => ({ role: m.role === "jarvis" ? "assistant" : "user", content: m.text })).slice(0, -1);
+      const raw = await callAPI(buildJarvisSystem(), text, history);
+      const clean = raw.replace(/```json|```/g, "").trim();
+      let result;
+      try { result = JSON.parse(clean.slice(clean.indexOf("{"), clean.lastIndexOf("}") + 1)); }
+      catch { result = { reply: raw, extractedData: {}, calendarEvent: null, alert: null }; }
+      const next = [...msgs, { role: "jarvis", text: result.reply, time: now() }];
+      setJarvisChat(next); saveSession(next);
+      voice.speak(result.reply);
+      if (result.extractedData && Object.keys(result.extractedData).length) setPendingData(result.extractedData);
+      if (result.calendarEvent) setCalEvents(p => [...p, { ...result.calendarEvent, id: Date.now(), source: "Jarvis" }]);
+      if (result.alert) setAlerts(p => [{ id: Date.now(), module: "Jarvis", icon: "⬡", color: "#00d4ff", text: result.alert, time: now(), read: false }, ...p].slice(0, 20));
+    } catch(err) {
+      const errMsg = err?.message || "Errore sconosciuto";
+      const next = [...msgs, { role: "jarvis", text: "Errore: " + errMsg + ". Controlla la chiave API su Vercel.", time: now() }];
+      setJarvisChat(next); saveSession(next);
+      console.error("Jarvis error:", err);
+    }
+    setJarvisLoading(false);
+  };
+
+  // ── VOICE FLOW ─────────────────────────────────────────────────────────────
+  const handleVoice = () => {
+    if (voice.listening) { voice.stopListening(); return; }
+    if (voice.speaking) { voice.stopSpeaking(); return; }
+    voice.startListening((text, isFinal) => {
+      setJarvisTranscript(text);
+      if (isFinal && text.trim()) processJarvis(text.trim());
+    });
+  };
+
+  // ── META-ASSISTANT ─────────────────────────────────────────────────────────
+  const buildMetaSystem = () => {
+    const coherence = calcCoherence(modules, allData);
+    const scores = modules.map(m => `${m.name}=${calcScore(m.id, allData[m.id] || [])}/100`).join(", ");
+    const userCtx = profile?.name ? `Utente: ${profile.name}, obiettivo: ${profile.goals || ""}` : "";
+    return `Sei il meta-assistente Life OS. ${userCtx}. Oggi: ${todayLong()}. Coerenza: ${coherence}/100. Score: ${scores}. Dati: ${JSON.stringify(modules.map(m => ({ area: m.name, ultimi3: (allData[m.id] || []).slice(-3) })))}. Alert attivi: ${alerts.filter(a => !a.read).length}. Missioni: ${missions.filter(m => !m.done).map(m => m.text).join("; ")}. Rispondi in italiano, trova correlazioni tra aree, sii diretto e preciso.`;
+  };
+
+  const sendMeta = async () => {
+    if (!chatInput.trim() || loading) return;
+    const msg = chatInput.trim(); setChatInput("");
+    const next = [...metaChat, { role: "user", content: msg }];
+    setMetaChat(next); setLoading(true);
+    try {
+      const reply = await callAPI(buildMetaSystem(), msg, next.slice(-10).map(m => ({ role: m.role, content: m.content })).slice(0, -1));
+      setMetaChat(p => [...p, { role: "assistant", content: reply }]);
+    } catch(err) { 
+      setMetaChat(p => [...p, { role: "assistant", content: "Errore: " + (err?.message || "connessione fallita") }]); 
+      console.error("Meta error:", err);
+    }
+    setLoading(false);
+  };
+
+  const generateWeekly = async () => {
+    setWeeklyLoading(true); setShowWeekly(true);
+    try {
+      const r = await callAPI(buildMetaSystem(), "Genera il report settimanale autopilot completo: 1) Cosa è andato bene, 2) Cosa migliorare, 3) Correlazioni tra aree, 4) 3 priorità per questa settimana. Usa i dati reali.", [], 1500);
+      setWeeklyText(r);
+    } catch { setWeeklyText("Errore nella generazione."); }
+    setWeeklyLoading(false);
+  };
+
+  const confirmData = () => {
+    if (!pendingData) return;
+    const updated = { ...allData };
+    for (const [mod, fields] of Object.entries(pendingData)) {
+      if (!updated[mod]) updated[mod] = [];
+      updated[mod].push({ ...fields, _date: new Date().toISOString(), _id: Date.now() });
+    }
+    setAllData(updated);
+    setPendingData(null);
+    const next = [...jarvisChat, { role: "jarvis", text: `Perfetto${profile?.name ? ` ${profile.name}` : ""}, ho salvato tutto nel Life OS. Lo trovi nella sezione Aree.`, time: now() }];
+    setJarvisChat(next); saveSession(next);
+  };
+
+  // ── IMPORT ─────────────────────────────────────────────────────────────────
+  const importData = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.modules) setModules(data.modules);
+        if (data.data) setAllData(data.data);
+        if (data.calendar) setCalEvents(data.calendar);
+        alert("✓ Dati importati con successo!");
+      } catch { alert("Errore: file non valido."); }
+    };
+    reader.readAsText(file);
+  };
+
+  // ── CALENDAR ───────────────────────────────────────────────────────────────
+  const calData = useMemo(() => {
+    const title = new Date(calYear, calMonth, 1).toLocaleDateString("it-IT", { month: "long", year: "numeric" });
+    const first = new Date(calYear, calMonth, 1).getDay();
+    const off = first === 0 ? 6 : first - 1;
+    const dim = new Date(calYear, calMonth + 1, 0).getDate();
+    const td = new Date();
+    const days = [];
+    for (let i = 0; i < off; i++) days.push({ n: new Date(calYear, calMonth, -off + i + 1).getDate(), other: true });
+    for (let d = 1; d <= dim; d++) {
+      const ds = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      days.push({ n: d, ds, isToday: d === td.getDate() && calMonth === td.getMonth() && calYear === td.getFullYear(), isSel: d === calSelDay, hasEv: calEvents.some(e => e.date === ds) });
+    }
+    return { title: title.charAt(0).toUpperCase() + title.slice(1), days };
+  }, [calYear, calMonth, calSelDay, calEvents]);
+
+  const selDateStr = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(calSelDay).padStart(2, "0")}`;
+  const selEvents = calEvents.filter(e => e.date === selDateStr);
+  const activeMod = modules.find(m => m.id === activeModule);
+  const unread = alerts.filter(a => !a.read).length;
+  const coherence = calcCoherence(modules, allData);
+  const radarData = modules.map(m => ({ subject: m.name, score: calcScore(m.id, allData[m.id] || []), fullMark: 100 }));
+  const timeline = modules.flatMap(m => (allData[m.id] || []).map(e => ({ ...e, _module: m.name, _icon: m.icon, _color: m.color }))).sort((a, b) => new Date(b._date) - new Date(a._date)).slice(0, 40);
+  const isJarvis = section === "jarvis";
+  const isDark = isJarvis;
+
+  // ── CSS VARS ───────────────────────────────────────────────────────────────
+  const bg = isDark ? "#020b18" : "#f0f4f8";
+  const sidebarBg = isDark ? "rgba(4,21,37,0.97)" : "white";
+  const border = isDark ? "rgba(0,212,255,0.14)" : "#e2e8f0";
+  const textPrimary = isDark ? "#c8eeff" : "#1e293b";
+  const textSecondary = isDark ? "#6ba3c0" : "#64748b";
+  const accent = isDark ? "#00d4ff" : "#6366f1";
+
+  if (!onboarded) return <Onboarding onComplete={(p, m) => { setProfile(p); setModules(m); setOnboarded(true); }} />;
+
+  // ── SESSION VIEWER ─────────────────────────────────────────────────────────
+  if (showSessions) return (
+    <div style={{ minHeight: "100vh", background: bg, fontFamily: "'DM Sans','Segoe UI',sans-serif", color: textPrimary, padding: 24 }}>
+      <div style={{ maxWidth: 600, margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+          <button onClick={() => { setShowSessions(false); setSelectedSession(null); }} style={{ border: "1px solid " + border, borderRadius: 9, padding: "8px 14px", background: "transparent", color: textSecondary, cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>← Indietro</button>
+          <h1 style={{ fontSize: 20, fontWeight: 700 }}>{selectedSession ? `Sessione del ${selectedSession.date}` : "Log sessioni"}</h1>
+        </div>
+        {selectedSession ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {selectedSession.chat?.map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                <div style={{ maxWidth: "80%", padding: "10px 14px", fontSize: 14, lineHeight: 1.6, borderRadius: m.role === "user" ? "14px 14px 3px 14px" : "14px 14px 14px 3px", background: m.role === "user" ? "#1e293b" : "white", color: m.role === "user" ? "white" : "#1e293b", border: m.role !== "user" ? "1px solid #e2e8f0" : "none" }}>{m.text}</div>
+              </div>
+            ))}
+            <button onClick={() => { setJarvisChat(selectedSession.chat || []); setSection("jarvis"); setShowSessions(false); setSelectedSession(null); }}
+              style={{ padding: "12px", border: "none", borderRadius: 10, background: "#1e293b", color: "white", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit", marginTop: 8 }}>
+              Continua questa sessione
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {!jarvisSessions.length && <div style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>Nessuna sessione salvata ancora.</div>}
+            {jarvisSessions.map(s => (
+              <div key={s.ts} onClick={() => setSelectedSession(s)} style={{ background: "white", borderRadius: 12, padding: "14px 16px", cursor: "pointer", border: "1px solid #e2e8f0", transition: "all 0.15s" }}>
+                <div style={{ fontSize: 11, color: "#6366f1", fontWeight: 700, marginBottom: 4 }}>{s.date}</div>
+                <div style={{ fontSize: 13, color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.preview}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>{s.messages} messaggi</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: bg, fontFamily: isDark ? "'Rajdhani','Segoe UI',sans-serif" : "'DM Sans','Segoe UI',sans-serif", color: textPrimary, transition: "all 0.4s" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0}
+        ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(128,128,128,0.3);border-radius:2px}
+        .card{background:white;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,0.06),0 4px 14px rgba(0,0,0,0.04)}
+        .btn{border:none;border-radius:9px;padding:9px 16px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;transition:all 0.15s}
+        .btn-p{background:#1e293b;color:white}.btn-p:hover{background:#0f172a}
+        .btn-g{background:transparent;color:#64748b}.btn-g:hover{background:#f1f5f9;color:#1e293b}
+        .nav-i{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:500;color:#64748b;transition:all 0.15s;border:none;background:none;font-family:inherit;width:100%;text-align:left}
+        .nav-i:hover{background:#f1f5f9;color:#1e293b}.nav-i.on{background:#1e293b;color:white}
+        .ifield{border:1.5px solid #e2e8f0;border-radius:9px;padding:9px 13px;font-size:14px;font-family:inherit;color:#1e293b;outline:none;width:100%;background:white;transition:border-color 0.15s}
+        .ifield:focus{border-color:#6366f1}
+        .tag{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+        @keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+        .fi{animation:fi 0.22s ease forwards}
+        .mo{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px}
+        .mod{background:white;border-radius:18px;padding:26px;width:100%;max-width:500px;max-height:88vh;overflow-y:auto}
+        @keyframes spin{from{transform:translate(-50%,-50%) rotate(0deg)}to{transform:translate(-50%,-50%) rotate(360deg)}}
+        @keyframes cp{0%,100%{box-shadow:0 0 28px rgba(0,212,255,0.55),0 0 56px rgba(0,212,255,0.22)}50%{box-shadow:0 0 52px rgba(0,212,255,0.9),0 0 96px rgba(0,212,255,0.4)}}
+        @keyframes ct{0%,100%{box-shadow:0 0 30px rgba(0,255,200,0.6),0 0 58px rgba(0,255,200,0.25)}50%{box-shadow:0 0 46px rgba(0,212,255,0.9),0 0 82px rgba(0,212,255,0.38)}}
+        @keyframes wv{0%,100%{height:4px}50%{height:var(--h,16px)}}
+        @keyframes tb{0%,100%{transform:translateY(0);opacity:0.35}50%{transform:translateY(-5px);opacity:1}}
+        @keyframes bd{0%,100%{opacity:1}50%{opacity:0.3}}
+        @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+      `}</style>
+
+      {isDark && <>
+        <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, backgroundImage: "linear-gradient(rgba(0,212,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.025) 1px,transparent 1px)", backgroundSize: "44px 44px" }} />
+        <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 999, background: "repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.022) 2px,rgba(0,0,0,0.022) 4px)" }} />
+      </>}
+
+      {/* Offline banner */}
+      {!isOnline && <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "#f59e0b", color: "white", fontSize: 12, fontWeight: 600, textAlign: "center", padding: "6px", zIndex: 1000 }}>📴 Modalità offline — i dati vengono salvati localmente</div>}
+
+      {/* Focus mode — Jarvis only */}
+      {jarvisFocus ? (
+        <div style={{ minHeight: "100vh", background: "#020b18", display: "flex", flexDirection: "column", alignItems: "center", padding: "40px 20px 20px", position: "relative", zIndex: 1 }}>
+          <button onClick={() => setJarvisFocus(false)} style={{ position: "absolute", top: 20, right: 20, border: "1px solid rgba(0,212,255,0.2)", borderRadius: 9, padding: "7px 13px", background: "rgba(0,212,255,0.06)", color: "#6ba3c0", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>↗ Espandi</button>
+          <div style={{ fontSize: 11, fontFamily: "'Share Tech Mono'", color: "#00ffcc", letterSpacing: "0.15em", marginBottom: 20, animation: "bd 2s infinite" }}>⬡ JARVIS ONLINE</div>
+          {/* Arc reactor compact */}
+          <div style={{ position: "relative", width: 180, height: 180, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+            {[160, 128, 100].map((size, i) => <div key={i} style={{ position: "absolute", width: size, height: size, borderRadius: "50%", border: `1px ${i === 1 ? "dashed" : "solid"} rgba(0,212,255,${0.3 - i * 0.08})`, top: "50%", left: "50%", transform: "translate(-50%,-50%)", animation: `spin ${[18,10,6.5][i]}s linear ${i % 2 ? "reverse" : ""} infinite` }} />)}
+            <div onClick={handleVoice} style={{ width: 72, height: 72, borderRadius: "50%", background: "radial-gradient(circle at 32% 32%,#00eeff,#005588,#001020)", boxShadow: voice.listening ? "0 0 52px rgba(0,212,255,0.9)" : voice.speaking ? "0 0 30px rgba(0,255,200,0.6)" : "0 0 28px rgba(0,212,255,0.5)", animation: voice.listening ? "cp 0.75s infinite" : voice.speaking ? "ct 1.4s infinite" : "none", cursor: "pointer", zIndex: 3, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>
+              {voice.speaking ? "◉" : voice.listening ? "◎" : "⬡"}
+            </div>
+          </div>
+          <div style={{ fontFamily: "'Share Tech Mono'", fontSize: 11, color: "#6ba3c0", letterSpacing: "0.15em", marginBottom: 12 }}>
+            {voice.listening ? "IN ASCOLTO..." : voice.jarvisLoading ? "ELABORO..." : voice.speaking ? "RISPONDO..." : "TOCCA PER PARLARE"}
+          </div>
+          {voice.micError && <div style={{ fontSize: 12, color: "#ff6b35", textAlign: "center", marginBottom: 10, padding: "8px 14px", border: "1px solid rgba(255,107,53,0.2)", borderRadius: 10, background: "rgba(255,107,53,0.06)" }}>{voice.micError} <span style={{ cursor: "pointer", marginLeft: 6 }} onClick={() => voice.setMicError(null)}>✕</span></div>}
+          <div style={{ width: "100%", maxWidth: 400, maxHeight: 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {jarvisChat.slice(-10).map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                <div style={{ maxWidth: "85%", padding: "9px 13px", fontSize: 13, lineHeight: 1.6, borderRadius: m.role === "user" ? "13px 13px 3px 13px" : "13px 13px 13px 3px", background: m.role === "user" ? "rgba(0,212,255,0.1)" : "rgba(0,212,255,0.04)", border: `1px solid rgba(0,212,255,${m.role === "user" ? 0.18 : 0.1})`, borderLeft: m.role === "jarvis" ? "2px solid #00d4ff" : undefined, color: "#c8eeff" }}>{m.text}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, width: "100%", maxWidth: 400 }}>
+            <input value={jarvisInput} onChange={e => setJarvisInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && jarvisInput.trim()) { processJarvis(jarvisInput); setJarvisInput(""); } }} placeholder="Scrivi a Jarvis..." style={{ flex: 1, background: "rgba(0,212,255,0.04)", border: "1px solid rgba(0,212,255,0.18)", borderRadius: 12, padding: "11px 14px", color: "#c8eeff", fontFamily: "inherit", fontSize: 14, outline: "none" }} />
+            <button onClick={() => { if (jarvisInput.trim()) { processJarvis(jarvisInput); setJarvisInput(""); } }} style={{ width: 44, height: 44, border: "1px solid rgba(0,212,255,0.25)", borderRadius: 12, background: "rgba(0,212,255,0.12)", color: "#00d4ff", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>↑</button>
+          </div>
+        </div>
+      ) : (
+
+      <div style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
+
+        {/* ── SIDEBAR ── */}
+        <div style={{ width: 218, background: sidebarBg, borderRight: `1px solid ${border}`, padding: "20px 10px", display: "flex", flexDirection: "column", gap: 3, position: "fixed", top: 0, left: 0, height: "100vh", overflowY: "auto", zIndex: 10 }}>
+          <div style={{ padding: "0 8px 16px", borderBottom: `1px solid ${border}`, marginBottom: 4 }}>
+            <div style={{ fontSize: isJarvis ? 15 : 17, fontWeight: 700, color: accent, letterSpacing: isJarvis ? "0.28em" : "-0.03em", textShadow: isJarvis ? "0 0 14px rgba(0,212,255,0.4)" : "none" }}>
+              {isJarvis ? "J.A.R.V.I.S" : "Life OS"}
+            </div>
+            {profile?.name && <div style={{ fontSize: 11, color: textSecondary, marginTop: 2 }}>Ciao, {profile.name}</div>}
+            {!isOnline && <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 2, fontWeight: 600 }}>📴 Offline</div>}
+          </div>
+
+          <div style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "rgba(0,212,255,0.45)" : "#94a3b8", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0 8px", marginBottom: 4, marginTop: 4 }}>Principale</div>
+          {[["jarvis","⬡","Jarvis"],["dashboard","📊","Dashboard"],["chat","🧠","Meta-AI"],["timeline","🕐","Timeline"],["calendar","⊞","Agenda"]].map(([id, icon, label]) => (
+            <button key={id} className={`nav-i ${section === id ? "on" : ""}`}
+              style={isJarvis ? { color: section === id ? "#020b18" : "#6ba3c0", background: section === id ? "#00d4ff" : "transparent" } : {}}
+              onClick={() => { setSection(id); setActiveModule(null); }}>
+              <span>{icon}</span>{label}
+              {id === "chat" && unread > 0 && <span style={{ marginLeft: "auto", background: "#ef4444", color: "white", borderRadius: 10, padding: "1px 6px", fontSize: 10 }}>{unread}</span>}
+            </button>
+          ))}
+          <button className="nav-i" style={isJarvis ? { color: "#6ba3c0" } : {}} onClick={() => setShowSessions(true)}>
+            <span>≡</span>Sessioni
+          </button>
+
+          <div style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "rgba(0,212,255,0.45)" : "#94a3b8", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0 8px", marginBottom: 4, marginTop: 12 }}>Aree di vita</div>
+          {modules.map(m => {
+            const s = calcScore(m.id, allData[m.id] || []);
+            const isAct = activeModule === m.id && section === "module";
+            return (
+              <button key={m.id} className={`nav-i ${isAct ? "on" : ""}`}
+                style={isJarvis ? { color: isAct ? "#020b18" : "#6ba3c0", background: isAct ? "#00d4ff" : "transparent" } : {}}
+                onClick={() => { setActiveModule(m.id); setSection("module"); }}>
+                <span>{m.icon}</span>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: isAct ? (isJarvis ? "#020b18" : "rgba(255,255,255,0.7)") : scoreColor(s) }}>{s}</span>
+              </button>
+            );
+          })}
+          <button className="nav-i" style={{ color: "#6366f1", fontStyle: "italic", ...(isJarvis ? { color: "#00ffcc" } : {}) }} onClick={() => setShowAddModule(true)}><span>+</span>Nuova area</button>
+
+          {/* Coherence + export */}
+          <div style={{ marginTop: "auto", padding: "12px 8px 0", borderTop: `1px solid ${border}` }}>
+            <div style={{ fontSize: 10, color: textSecondary, marginBottom: 4, fontFamily: isJarvis ? "'Share Tech Mono'" : "inherit", letterSpacing: isJarvis ? "0.1em" : 0 }}>
+              {isJarvis ? "COERENZA" : "Coerenza globale"}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+              <div style={{ flex: 1, height: 4, background: isJarvis ? "rgba(0,212,255,0.1)" : "#f1f5f9", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${coherence}%`, background: isJarvis ? "#00d4ff" : scoreColor(coherence), borderRadius: 2, transition: "width 0.5s" }} />
+              </div>
+              <span style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "#00d4ff" : scoreColor(coherence) }}>{coherence}</span>
+            </div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              <button onClick={() => exportData(allData, modules, calEvents)} style={{ flex: 1, padding: "5px 0", border: `1px solid ${border}`, borderRadius: 7, background: "transparent", color: textSecondary, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>↓ Export</button>
+              <button onClick={() => document.getElementById("import-input").click()} style={{ flex: 1, padding: "5px 0", border: `1px solid ${border}`, borderRadius: 7, background: "transparent", color: textSecondary, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>↑ Import</button>
+              <input id="import-input" type="file" accept=".json" style={{ display: "none" }} onChange={importData} />
+            </div>
+          </div>
+        </div>
+
+        {/* ── MAIN ── */}
+        <div style={{ marginLeft: 218, flex: 1, padding: section === "jarvis" ? "22px 22px 40px" : "24px 24px 40px", minHeight: "100vh" }}>
+
+          {/* ══ JARVIS ══ */}
+          {section === "jarvis" && (
+            <div className="fi" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 540, margin: "0 auto" }}>
+              <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 10, fontFamily: "'Share Tech Mono'", color: textSecondary, letterSpacing: "0.15em" }}>{todayLong().toUpperCase().slice(0,20)}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: "'Share Tech Mono'", color: isOnline ? "#00ffcc" : "#f59e0b" }}>
+                    <div style={{ width: 5, height: 5, borderRadius: "50%", background: isOnline ? "#00ffcc" : "#f59e0b", animation: "bd 2s infinite" }} />
+                    {isOnline ? "ONLINE" : "OFFLINE"}
+                  </div>
+                  <button onClick={() => setJarvisFocus(true)} style={{ border: "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 10px", background: "rgba(0,212,255,0.06)", color: "#6ba3c0", cursor: "pointer", fontSize: 10, fontFamily: "'Share Tech Mono'", letterSpacing: "0.1em" }}>FOCUS</button>
+                </div>
+              </div>
+
+              {/* Arc Reactor */}
+              <div style={{ position: "relative", width: 196, height: 196, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {[172, 138, 106].map((size, i) => <div key={i} style={{ position: "absolute", width: size, height: size, borderRadius: "50%", border: `1px ${i === 1 ? "dashed" : "solid"} rgba(0,212,255,${0.32 - i * 0.08})`, top: "50%", left: "50%", transform: "translate(-50%,-50%)", animation: `spin ${[19,11,7][i]}s linear ${i % 2 ? "reverse" : ""} infinite` }} />)}
+                <div onClick={handleVoice} style={{ width: 76, height: 76, borderRadius: "50%", background: "radial-gradient(circle at 32% 32%,#00eeff,#005588,#001020)", boxShadow: voice.listening ? "0 0 52px rgba(0,212,255,0.9),0 0 96px rgba(0,212,255,0.38)" : voice.speaking ? "0 0 32px rgba(0,255,200,0.6),0 0 60px rgba(0,255,200,0.22)" : "0 0 28px rgba(0,212,255,0.5),0 0 54px rgba(0,212,255,0.2)", animation: voice.listening ? "cp 0.75s infinite" : voice.speaking ? "ct 1.4s infinite" : "none", cursor: "pointer", zIndex: 3, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, userSelect: "none", transition: "transform 0.2s" }}>
+                  {voice.speaking ? "◉" : voice.listening ? "◎" : "⬡"}
+                </div>
+              </div>
+
+              <div style={{ fontFamily: "'Share Tech Mono'", fontSize: 11, color: textSecondary, letterSpacing: "0.15em", textTransform: "uppercase" }}>
+                {voice.listening ? "In ascolto..." : jarvisLoading ? "Elaboro..." : voice.speaking ? "Rispondo..." : "Tocca il reattore per parlare"}
+              </div>
+
+              {/* Mic level indicator */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, height: 34, width: "100%" }}>
+                {Array.from({ length: 24 }, (_, i) => (
+                  <div key={i} style={{ width: 3, borderRadius: 2, background: voice.speaking ? "#00ffcc" : "#00d4ff", height: (voice.listening || voice.speaking) ? undefined : 4, animation: (voice.listening || voice.speaking) ? `wv ${0.45 + (i % 5) * 0.08}s ease-in-out ${i * 0.038}s infinite` : "none", "--h": `${6 + (i % 7) * 4}px` }} />
+                ))}
+              </div>
+
+              {/* Mic error */}
+              {voice.micError && (
+                <div style={{ width: "100%", padding: "10px 14px", border: "1px solid rgba(255,107,53,0.25)", borderRadius: 10, background: "rgba(255,107,53,0.06)", fontSize: 13, color: "#ff6b35", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>{voice.micError}</span>
+                  <button onClick={() => voice.setMicError(null)} style={{ background: "none", border: "none", color: "#ff6b35", cursor: "pointer", fontSize: 14 }}>✕</button>
+                </div>
+              )}
+
+              {jarvisTranscript && <div style={{ width: "100%", background: "rgba(0,212,255,0.04)", border: "1px solid rgba(0,212,255,0.14)", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: textSecondary, fontStyle: "italic", textAlign: "center" }}>{jarvisTranscript}</div>}
+
+              {/* Pending data confirm */}
+              {pendingData && (
+                <div style={{ width: "100%", background: "rgba(0,255,130,0.03)", border: "1px solid rgba(0,255,130,0.18)", borderRadius: 13, padding: 15 }}>
+                  <div style={{ fontSize: 10, fontFamily: "'Share Tech Mono'", letterSpacing: "0.15em", color: "#00ffcc", textTransform: "uppercase", marginBottom: 10 }}>⬡ Dati rilevati — Salvo nel Life OS?</div>
+                  {Object.entries(pendingData).flatMap(([mod, fields]) => Object.entries(fields).map(([k, v]) => (
+                    <div key={`${mod}-${k}`} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid rgba(0,212,255,0.06)", fontSize: 13 }}>
+                      <span style={{ color: textSecondary }}>{mod} › {k}</span>
+                      <span style={{ color: "#00ffcc", fontFamily: "'Share Tech Mono'", fontWeight: 700 }}>{String(v)}</span>
+                    </div>
+                  )))}
+                  <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
+                    <button onClick={() => setPendingData(null)} style={{ flex: 1, padding: 9, border: "1px solid rgba(255,107,53,0.2)", borderRadius: 8, background: "rgba(255,107,53,0.07)", color: "#ff6b35", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>✕ No</button>
+                    <button onClick={confirmData} style={{ flex: 1, padding: 9, border: "1px solid rgba(0,212,255,0.24)", borderRadius: 8, background: "rgba(0,212,255,0.11)", color: "#00d4ff", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700 }}>✓ Salva</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Life OS scores strip */}
+              <div style={{ width: "100%", background: "rgba(0,212,255,0.04)", border: "1px solid rgba(0,212,255,0.14)", borderRadius: 11, padding: "9px 13px" }}>
+                <div style={{ fontSize: 10, fontFamily: "'Share Tech Mono'", letterSpacing: "0.13em", color: "#00d4ff", textTransform: "uppercase", marginBottom: 7 }}>⬡ Life OS</div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "space-around" }}>
+                  {modules.slice(0, 5).map(m => { const s = calcScore(m.id, allData[m.id] || []); return (
+                    <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }} onClick={() => { setActiveModule(m.id); setSection("module"); }}>
+                      <span style={{ fontSize: 15 }}>{m.icon}</span>
+                      <span style={{ fontSize: 10, fontFamily: "'Share Tech Mono'", color: scoreColor(s), fontWeight: 700 }}>{s}</span>
+                    </div>
+                  ); })}
+                </div>
+              </div>
+
+              {/* Chat log */}
+              <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 9, maxHeight: 300, overflowY: "auto" }}>
+                {jarvisChat.slice(-20).map((m, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                    <div style={{ maxWidth: "82%", padding: "10px 13px", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap", borderRadius: m.role === "user" ? "14px 14px 3px 14px" : "14px 14px 14px 3px", background: m.role === "user" ? "rgba(0,212,255,0.1)" : "rgba(0,212,255,0.04)", border: `1px solid rgba(0,212,255,${m.role === "user" ? 0.18 : 0.1})`, borderLeft: m.role === "jarvis" ? "2px solid #00d4ff" : undefined, color: "#c8eeff" }}>
+                      {m.text}
+                    </div>
+                  </div>
+                ))}
+                {jarvisLoading && <div style={{ display: "flex", gap: 5, padding: "12px 15px", background: "rgba(0,212,255,0.04)", border: "1px solid rgba(0,212,255,0.1)", borderRadius: "14px 14px 14px 3px", width: "fit-content" }}>
+                  {[0,1,2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "#00d4ff", animation: `tb 1.1s ${i * 0.18}s ease-in-out infinite` }} />)}
+                </div>}
+                <div ref={jarvisEndRef} />
+              </div>
+
+              {/* Input */}
+              <div style={{ display: "flex", gap: 8, width: "100%" }}>
+                <input value={jarvisInput} onChange={e => setJarvisInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && jarvisInput.trim()) { processJarvis(jarvisInput); setJarvisInput(""); } }} placeholder="Oppure scrivi qui..." style={{ flex: 1, background: "rgba(0,212,255,0.04)", border: "1px solid rgba(0,212,255,0.18)", borderRadius: 12, padding: "11px 14px", color: "#c8eeff", fontFamily: "inherit", fontSize: 14, outline: "none" }} />
+                <button onClick={() => { if (jarvisInput.trim()) { processJarvis(jarvisInput); setJarvisInput(""); } }} style={{ width: 44, height: 44, border: "1px solid rgba(0,212,255,0.24)", borderRadius: 12, background: "rgba(0,212,255,0.11)", color: "#00d4ff", fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>↑</button>
+              </div>
+              {jarvisChat.length > 1 && <button onClick={() => { setJarvisChat([]); setJarvisTranscript(""); }} style={{ fontSize: 10, color: textSecondary, background: "none", border: "none", cursor: "pointer", fontFamily: "'Share Tech Mono'", letterSpacing: "0.1em" }}>NUOVA SESSIONE</button>}
+            </div>
+          )}
+
+          {/* ══ DASHBOARD ══ */}
+          {section === "dashboard" && (
+            <div className="fi">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+                <div>
+                  <h1 style={{ fontSize: 23, fontWeight: 700, letterSpacing: "-0.03em" }}>
+                    {(() => { const h = new Date().getHours(); return h < 12 ? "Buongiorno" : h < 18 ? "Buon pomeriggio" : "Buonasera"; })()} {profile?.name ? `${profile.name} 👋` : "👋"}
+                  </h1>
+                  <div style={{ color: "#64748b", fontSize: 13, marginTop: 3 }}>{todayLong()}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-g" style={{ border: "1px solid #e2e8f0", fontSize: 12 }} onClick={() => setSection("jarvis")}>⬡ Jarvis</button>
+                  <button className="btn btn-p" onClick={generateWeekly}>📋 Report</button>
+                </div>
+              </div>
+
+              {/* Offline queue warning */}
+              {offlineQueue.length > 0 && (
+                <div style={{ marginBottom: 16, padding: "11px 15px", borderRadius: 11, background: "#fffbeb", border: "1px solid #fcd34d", borderLeft: "3px solid #f59e0b", fontSize: 13, color: "#92400e" }}>
+                  📴 {offlineQueue.length} {offlineQueue.length === 1 ? "registrazione salvata" : "registrazioni salvate"} offline — verranno sincronizzate quando torni online.
+                </div>
+              )}
+
+              {unread > 0 && (
+                <div style={{ marginBottom: 18 }}>
+                  {alerts.filter(a => !a.read).slice(0, 3).map(a => (
+                    <div key={a.id} className="card" style={{ padding: "11px 15px", display: "flex", alignItems: "center", gap: 10, borderLeft: `3px solid ${a.color}`, marginBottom: 7 }}>
+                      <span style={{ fontSize: 18 }}>{a.icon}</span>
+                      <div style={{ flex: 1, fontSize: 13, color: "#475569" }}><strong style={{ color: a.color }}>{a.module}:</strong> {a.text}</div>
+                      <button className="btn btn-g" style={{ padding: "3px 9px", fontSize: 11 }} onClick={() => setAlerts(p => p.map(x => x.id === a.id ? { ...x, read: true } : x))}>✓</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                <div className="card" style={{ padding: 20, gridRow: "span 2" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>Radar delle aree</div>
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 12 }}>Score 0–100</div>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <RadarChart data={radarData}>
+                      <PolarGrid stroke="#e2e8f0" />
+                      <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: "#64748b" }} />
+                      <Radar dataKey="score" stroke="#6366f1" fill="#6366f1" fillOpacity={0.13} strokeWidth={2} dot={{ fill: "#6366f1", r: 3 }} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                  <div style={{ textAlign: "center", marginTop: 5 }}>
+                    <span style={{ fontSize: 12, color: "#64748b" }}>Coerenza: </span>
+                    <span style={{ fontSize: 17, fontWeight: 700, color: scoreColor(coherence) }}>{coherence}</span><span style={{ fontSize: 11, color: "#94a3b8" }}>/100</span>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 17 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>🎯 Missioni</div>
+                  {missions.map(m => (
+                    <div key={m.id} style={{ display: "flex", gap: 9, alignItems: "flex-start", marginBottom: 8 }}>
+                      <input type="checkbox" checked={m.done} onChange={() => setMissions(p => p.map(x => x.id === m.id ? { ...x, done: !x.done } : x))} style={{ marginTop: 2, accentColor: "#6366f1" }} />
+                      <span style={{ fontSize: 12, color: m.done ? "#94a3b8" : "#475569", textDecoration: m.done ? "line-through" : "none", lineHeight: 1.4 }}>{m.text}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="card" style={{ padding: 17 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Score per area</div>
+                  {modules.map(m => { const s = calcScore(m.id, allData[m.id] || []); return (
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 13, width: 20 }}>{m.icon}</span>
+                      <span style={{ fontSize: 11, color: "#64748b", width: 68, flexShrink: 0 }}>{m.name}</span>
+                      <div style={{ flex: 1, height: 5, background: "#f1f5f9", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${s}%`, background: scoreColor(s), borderRadius: 2, transition: "width 0.5s" }} />
+                      </div>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: scoreColor(s), width: 24, textAlign: "right" }}>{s}</span>
+                    </div>
+                  ); })}
+                </div>
+              </div>
+
+              {/* Insights */}
+              <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>💡 Insight automatici</div>
+                  <button className="btn btn-g" style={{ fontSize: 11, border: "1px solid #e2e8f0", padding: "5px 11px" }} onClick={generateInsights} disabled={insightsLoading}>
+                    {insightsLoading ? "..." : "↻ Aggiorna"}
+                  </button>
+                </div>
+                {!insights.length ? (
+                  <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", padding: "16px 0" }}>Clicca "Aggiorna" per generare insight sulle tue aree</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {insights.map(ins => (
+                      <div key={ins.id} style={{ padding: "12px 14px", borderRadius: 10, background: ins.type === "positive" ? "#f0fdf4" : ins.type === "warning" ? "#fffbeb" : "#f8fafc", borderLeft: `3px solid ${ins.type === "positive" ? "#10b981" : ins.type === "warning" ? "#f59e0b" : "#94a3b8"}` }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: ins.type === "positive" ? "#065f46" : ins.type === "warning" ? "#92400e" : "#475569", marginBottom: 3 }}>{ins.title}</div>
+                        <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>{ins.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="card" style={{ padding: 13, display: "flex", gap: 7, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "#94a3b8", alignSelf: "center" }}>Accesso rapido →</span>
+                {modules.map(m => <button key={m.id} className="btn btn-g" style={{ padding: "5px 12px", fontSize: 12, border: "1px solid #e2e8f0" }} onClick={() => { setActiveModule(m.id); setSection("module"); }}>{m.icon} {m.name}</button>)}
+              </div>
+            </div>
+          )}
+
+          {/* ══ MODULE ══ */}
+          {section === "module" && activeMod && (() => {
+            const entries = allData[activeMod.id] || [];
+            const score = calcScore(activeMod.id, entries);
+            // Real trend data — pick first numeric field
+            const numericField = activeMod.fields.find(f => f.type === "number");
+            const realTrend = numericField ? buildTrendData(activeMod.id, entries, numericField.id) : [];
+            return (
+              <div className="fi">
+                <div style={{ display: "flex", alignItems: "center", gap: 13, marginBottom: 22 }}>
+                  <span style={{ fontSize: 32 }}>{activeMod.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <h1 style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.03em" }}>{activeMod.name}</h1>
+                    <div style={{ display: "flex", gap: 7, marginTop: 4 }}>
+                      <span className="tag" style={{ background: scoreColor(score) + "20", color: scoreColor(score) }}>Score: {score}/100</span>
+                      <span className="tag" style={{ background: "#f1f5f9", color: "#64748b" }}>{entries.length} registrazioni</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn btn-g" style={{ border: "1px solid #e2e8f0", fontSize: 12 }} onClick={() => exportCSV(activeMod.id, entries, activeMod.name)}>↓ CSV</button>
+                    <button className="btn btn-g" style={{ border: "1px solid #e2e8f0" }} onClick={() => setShowEditModule(activeMod)}>✏️</button>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <div className="card" style={{ padding: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 13 }}>+ Registra dati</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {activeMod.fields.map(f => (
+                        <div key={f.id}>
+                          <label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 4 }}>{f.label}</label>
+                          {f.type === "boolean" ? (
+                            <div style={{ display: "flex", gap: 7 }}>
+                              {["Sì","No"].map(v => <button key={v} className="btn" style={{ flex: 1, background: formData[f.id] === v ? "#1e293b" : "#f8fafc", color: formData[f.id] === v ? "white" : "#64748b", border: "1.5px solid #e2e8f0", padding: "7px" }} onClick={() => setFormData(p => ({ ...p, [f.id]: v }))}>{v}</button>)}
+                            </div>
+                          ) : f.type === "scale" ? (
+                            <div style={{ display: "flex", gap: 2 }}>
+                              {[1,2,3,4,5,6,7,8,9,10].map(n => <button key={n} style={{ flex: 1, border: "1.5px solid", borderColor: formData[f.id] === n ? activeMod.color : "#e2e8f0", borderRadius: 5, padding: "5px 0", fontSize: 10, fontWeight: 600, cursor: "pointer", background: formData[f.id] === n ? activeMod.color : "white", color: formData[f.id] === n ? "white" : "#94a3b8" }} onClick={() => setFormData(p => ({ ...p, [f.id]: n }))}>{n}</button>)}
+                            </div>
+                          ) : (
+                            <input type={f.type === "number" ? "number" : "text"} className="ifield" placeholder={`Inserisci ${f.label.toLowerCase()}`} value={formData[f.id] || ""} onChange={e => setFormData(p => ({ ...p, [f.id]: e.target.value }))} />
+                          )}
+                        </div>
+                      ))}
+                      <button className="btn btn-p" style={{ marginTop: 4 }} onClick={() => saveEntry(activeMod.id)}>Salva registrazione</button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+                    {/* Real trend chart */}
+                    {realTrend.length > 1 && (
+                      <div className="card" style={{ padding: 17 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Trend reale — {numericField?.label}</div>
+                        <ResponsiveContainer width="100%" height={110}>
+                          <LineChart data={realTrend}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                            <XAxis dataKey="date" tick={{ fontSize: 9 }} />
+                            <YAxis hide />
+                            <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v) => [v, numericField?.label]} />
+                            <Line type="monotone" dataKey="v" stroke={activeMod.color} strokeWidth={2} dot={{ fill: activeMod.color, r: 3 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                    <div className="card" style={{ padding: 17, flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 9 }}>Ultime registrazioni</div>
+                      {!entries.length ? <div style={{ color: "#94a3b8", fontSize: 12, textAlign: "center", padding: "14px 0" }}>Nessun dato ancora</div> : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                          {entries.slice(-6).reverse().map(e => (
+                            <div key={e._id} style={{ padding: "8px 10px", background: "#f8fafc", borderRadius: 8, fontSize: 12 }}>
+                              <div style={{ color: "#94a3b8", marginBottom: 3, fontSize: 10 }}>{fmtDate(e._date)}</div>
+                              {activeMod.fields.filter(f => e[f.id] !== undefined && e[f.id] !== "").slice(0, 3).map(f => (
+                                <span key={f.id} style={{ marginRight: 8, color: "#475569" }}><strong>{f.label.split(" ")[0]}:</strong> {String(e[f.id])}</span>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ══ META CHAT ══ */}
+          {section === "chat" && (
+            <div className="fi" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" }}>
+              <div style={{ marginBottom: 16 }}>
+                <h1 style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.03em" }}>🧠 Meta-Assistente</h1>
+                <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>Trova connessioni e pattern tra tutte le aree</div>
+              </div>
+              {unread > 0 && (
+                <div className="card" style={{ padding: 12, marginBottom: 13, borderLeft: "3px solid #ef4444" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", marginBottom: 7 }}>🔔 {unread} alert non letti</div>
+                  {alerts.filter(a => !a.read).slice(0, 2).map(a => (
+                    <div key={a.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#475569", padding: "3px 0" }}>
+                      <span>{a.icon} <strong>{a.module}:</strong> {a.text}</span>
+                      <button className="btn btn-g" style={{ padding: "2px 7px", fontSize: 10 }} onClick={() => setAlerts(p => p.map(x => x.id === a.id ? { ...x, read: true } : x))}>✓</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="card" style={{ flex: 1, padding: 17, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 11 }}>
+                  {!metaChat.length && (
+                    <div style={{ textAlign: "center", padding: "32px 16px", color: "#94a3b8" }}>
+                      <div style={{ fontSize: 34, marginBottom: 10 }}>🧠</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>Sono il tuo meta-assistente</div>
+                      <div style={{ display: "flex", gap: 7, justifyContent: "center", marginTop: 14, flexWrap: "wrap" }}>
+                        {["Come sto andando?","Trova correlazioni tra le aree","Cosa migliorare questa settimana?"].map(s => (
+                          <button key={s} className="btn" style={{ background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", fontSize: 12 }} onClick={() => setChatInput(s)}>{s}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {metaChat.map((m, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                      <div style={{ maxWidth: "79%", padding: "11px 14px", borderRadius: m.role === "user" ? "14px 14px 3px 14px" : "14px 14px 14px 3px", background: m.role === "user" ? "#1e293b" : "#f8fafc", color: m.role === "user" ? "white" : "#1e293b", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap", border: m.role === "assistant" ? "1px solid #e2e8f0" : "none" }}>{m.content}</div>
+                    </div>
+                  ))}
+                  {loading && <div style={{ display: "flex" }}><div style={{ padding: "11px 15px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "14px 14px 14px 3px", color: "#94a3b8", fontSize: 17, letterSpacing: 4 }}>···</div></div>}
+                  <div ref={chatEndRef} />
+                </div>
+                <div style={{ display: "flex", gap: 8, paddingTop: 11, borderTop: "1px solid #f1f5f9", marginTop: 9 }}>
+                  <textarea className="ifield" rows={2} style={{ resize: "none", flex: 1 }} placeholder="Chiedimi qualsiasi cosa sulla tua vita..." value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMeta(); } }} />
+                  <button className="btn btn-p" style={{ padding: "11px 15px", fontSize: 17 }} onClick={sendMeta} disabled={loading}>↑</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══ TIMELINE ══ */}
+          {section === "timeline" && (
+            <div className="fi">
+              <h1 style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 20 }}>🕐 Timeline universale</h1>
+              {!timeline.length ? (
+                <div className="card" style={{ padding: 50, textAlign: "center", color: "#94a3b8" }}>
+                  <div style={{ fontSize: 34, marginBottom: 10 }}>📭</div>
+                  <div>Nessun dato ancora.</div>
+                </div>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <div style={{ position: "absolute", left: 18, top: 0, bottom: 0, width: 2, background: "#e2e8f0" }} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {timeline.map((e, i) => (
+                      <div key={i} style={{ display: "flex", gap: 13, paddingLeft: 42, position: "relative" }}>
+                        <div style={{ position: "absolute", left: 9, top: 10, width: 19, height: 19, borderRadius: "50%", background: e._color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, zIndex: 1 }}>{e._icon}</div>
+                        <div className="card" style={{ flex: 1, padding: "11px 15px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span className="tag" style={{ background: e._color + "20", color: e._color }}>{e._module}</span>
+                            <span style={{ fontSize: 10, color: "#94a3b8" }}>{fmtDate(e._date)}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#475569", display: "flex", flexWrap: "wrap", gap: 7 }}>
+                            {Object.entries(e).filter(([k]) => !k.startsWith("_")).slice(0, 4).map(([k, v]) => <span key={k}><strong>{k}:</strong> {String(v)}</span>)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ CALENDAR ══ */}
+          {section === "calendar" && (
+            <div className="fi" style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+              <h1 style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.03em" }}>⊞ Agenda</h1>
+              <div className="card" style={{ padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 15 }}>
+                  <button className="btn btn-g" style={{ border: "1px solid #e2e8f0", padding: "6px 12px" }} onClick={() => { let m = calMonth - 1, y = calYear; if (m < 0) { m = 11; y--; } setCalMonth(m); setCalYear(y); }}>‹</button>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>{calData.title}</div>
+                  <button className="btn btn-g" style={{ border: "1px solid #e2e8f0", padding: "6px 12px" }} onClick={() => { let m = calMonth + 1, y = calYear; if (m > 11) { m = 0; y++; } setCalMonth(m); setCalYear(y); }}>›</button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3, marginBottom: 10 }}>
+                  {["Lu","Ma","Me","Gi","Ve","Sa","Do"].map(d => <div key={d} style={{ textAlign: "center", fontSize: 10, color: "#94a3b8", padding: "4px 0" }}>{d}</div>)}
+                  {calData.days.map((d, i) => (
+                    <div key={i} onClick={() => { if (!d.other) setCalSelDay(d.n); }}
+                      style={{ aspectRatio: 1, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 7, fontSize: 12, fontWeight: 500, cursor: d.other ? "default" : "pointer", opacity: d.other ? 0.28 : 1, position: "relative", border: `1px solid ${d.isToday ? "#6366f1" : "transparent"}`, background: d.isSel && !d.other ? "#f0f4ff" : "transparent", color: d.isToday ? "#6366f1" : "#1e293b" }}>
+                      {d.n}
+                      {d.hasEv && <div style={{ position: "absolute", bottom: 2, width: 4, height: 4, borderRadius: "50%", background: "#10b981" }} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 9 }}>
+                  {new Date(selDateStr + "T12:00:00").toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" })}
+                </div>
+                {!selEvents.length ? <div className="card" style={{ padding: "18px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>Nessun evento — chiedi a Jarvis di aggiungerne uno</div> : (
+                  selEvents.map(e => (
+                    <div key={e.id} className="card" style={{ padding: "12px 15px", marginBottom: 7, borderLeft: "3px solid #6366f1" }}>
+                      <div style={{ fontSize: 11, color: "#6366f1", fontWeight: 700 }}>{e.time || "—"}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{e.title}</div>
+                      {e.description && <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{e.description}</div>}
+                      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>via {e.source || "Jarvis"}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
+      {/* ══ MODALS ══ */}
+      {showWeekly && (
+        <div className="mo" onClick={() => setShowWeekly(false)}>
+          <div className="mod" onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 17 }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>📋 Report Settimanale</div>
+              <button className="btn btn-g" onClick={() => setShowWeekly(false)}>✕</button>
+            </div>
+            {weeklyLoading ? <div style={{ textAlign: "center", padding: "36px 0", color: "#94a3b8" }}><div style={{ fontSize: 28, marginBottom: 10 }}>⚙️</div><div style={{ fontSize: 13 }}>Analizzando tutte le aree...</div></div>
+              : <div style={{ fontSize: 14, lineHeight: 1.7, color: "#475569", whiteSpace: "pre-wrap" }}>{weeklyText}</div>}
+          </div>
+        </div>
+      )}
+
+      {showAddModule && (
+        <div className="mo" onClick={() => setShowAddModule(false)}>
+          <div className="mod" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 18 }}>+ Nuova area di vita</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div><label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 5 }}>Nome area</label><input className="ifield" placeholder="es. Relazioni, Casa, Sport..." value={newModule.name} onChange={e => setNewModule(p => ({ ...p, name: e.target.value }))} /></div>
+              <div><label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 7 }}>Icona</label><div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{ICONS.map(ic => <button key={ic} style={{ width: 33, height: 33, fontSize: 16, border: `2px solid ${newModule.icon === ic ? "#6366f1" : "#e2e8f0"}`, borderRadius: 7, cursor: "pointer", background: newModule.icon === ic ? "#eef2ff" : "white" }} onClick={() => setNewModule(p => ({ ...p, icon: ic }))}>{ic}</button>)}</div></div>
+              <div><label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 7 }}>Colore</label><div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>{COLORS.map(c => <button key={c} style={{ width: 26, height: 26, borderRadius: "50%", background: c, border: `3px solid ${newModule.color === c ? "#1e293b" : "transparent"}`, cursor: "pointer" }} onClick={() => setNewModule(p => ({ ...p, color: c }))} />)}</div></div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 7 }}>Campi da tracciare</label>
+                {newModule.fields.map((f, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#475569", padding: "4px 0" }}><span>{f.label} ({f.type})</span><button className="btn btn-g" style={{ padding: "2px 7px", fontSize: 10, color: "#ef4444" }} onClick={() => setNewModule(p => ({ ...p, fields: p.fields.filter((_, j) => j !== i) }))}>✕</button></div>)}
+                <div style={{ display: "flex", gap: 7, marginTop: 8 }}>
+                  <input className="ifield" placeholder="Nome campo" value={newField.label} onChange={e => setNewField(p => ({ ...p, label: e.target.value }))} style={{ flex: 2 }} />
+                  <select className="ifield" value={newField.type} onChange={e => setNewField(p => ({ ...p, type: e.target.value }))} style={{ flex: 1 }}>
+                    {["text","number","boolean","scale"].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <button className="btn btn-p" style={{ padding: "9px 12px" }} onClick={() => { if (newField.label) { setNewModule(p => ({ ...p, fields: [...p.fields, { ...newField, id: newField.label.toLowerCase().replace(/\s+/g,"_") }] })); setNewField({ label: "", type: "text" }); } }}>+</button>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 9, marginTop: 6 }}>
+                <button className="btn btn-g" style={{ flex: 1 }} onClick={() => setShowAddModule(false)}>Annulla</button>
+                <button className="btn btn-p" style={{ flex: 2 }} onClick={() => { if (!newModule.name.trim()) return; const mod = { ...newModule, id: `custom_${Date.now()}`, fields: newModule.fields.length ? newModule.fields.map((f, i) => ({ ...f, id: f.id || `f${i}` })) : [{ id: "note", label: "Note", type: "text" }] }; setModules(p => [...p, mod]); setNewModule({ name: "", icon: "⭐", color: "#6366f1", fields: [] }); setShowAddModule(false); }}>Crea area</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModule && (
+        <div className="mo" onClick={() => setShowEditModule(null)}>
+          <div className="mod" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 18 }}>✏️ Modifica: {showEditModule.name}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div><label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 5 }}>Nome</label><input className="ifield" value={showEditModule.name} onChange={e => setShowEditModule(p => ({ ...p, name: e.target.value }))} /></div>
+              <div><label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 7 }}>Icona</label><div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{ICONS.map(ic => <button key={ic} style={{ width: 33, height: 33, fontSize: 16, border: `2px solid ${showEditModule.icon === ic ? "#6366f1" : "#e2e8f0"}`, borderRadius: 7, cursor: "pointer", background: showEditModule.icon === ic ? "#eef2ff" : "white" }} onClick={() => setShowEditModule(p => ({ ...p, icon: ic }))}>{ic}</button>)}</div></div>
+              <div><label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", display: "block", marginBottom: 7 }}>Colore</label><div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>{COLORS.map(c => <button key={c} style={{ width: 26, height: 26, borderRadius: "50%", background: c, border: `3px solid ${showEditModule.color === c ? "#1e293b" : "transparent"}`, cursor: "pointer" }} onClick={() => setShowEditModule(p => ({ ...p, color: c }))} />)}</div></div>
+              <div style={{ display: "flex", gap: 9, marginTop: 6 }}>
+                <button className="btn" style={{ flex: 1, background: "#fee2e2", color: "#ef4444" }} onClick={() => { if (window.confirm("Eliminare?")) { setModules(p => p.filter(m => m.id !== showEditModule.id)); setShowEditModule(null); setSection("dashboard"); } }}>🗑 Elimina</button>
+                <button className="btn btn-g" style={{ flex: 1 }} onClick={() => setShowEditModule(null)}>Annulla</button>
+                <button className="btn btn-p" style={{ flex: 2 }} onClick={() => { setModules(p => p.map(m => m.id === showEditModule.id ? showEditModule : m)); setShowEditModule(null); }}>Salva</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+try {
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<React.StrictMode><App /></React.StrictMode>);
+  window.__appReady && window.__appReady();
+} catch(e) {
+  console.error('Mount error:', e);
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('loading').innerHTML = 
+    '<div style="color:#ff6b35;text-align:center;padding:30px;font-family:monospace">' +
+    '<div style="font-size:32px;margin-bottom:16px">⚠</div>' +
+    '<div>ERRORE: ' + e.message.slice(0,80) + '</div>' +
+    '</div>';
+}
+  </script>
+</body>
+</html>
