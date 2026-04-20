@@ -729,6 +729,11 @@ function App() {
   const chatEndRef = useRef(null);
   const jarvisEndRef = useRef(null);
   const voice = useVoice();
+  const { isMobile, isPortrait } = useResponsive();
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // ── PERSISTENCE ────────────────────────────────────────────────────────────
   useEffect(() => { S.set("lifeos_modules", modules); }, [modules]);
