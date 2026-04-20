@@ -67,9 +67,6 @@
 <div id="root"></div>
 
 <script>
-  // Setup screen logic — runs BEFORE React mounts
-  // React is only mounted after key is set
-  
   function setupHeaders(key) {
     window.__JARVIS_HEADERS = {
       "Content-Type": "application/json",
@@ -85,8 +82,8 @@
     overlay.innerHTML = 
       '<div class="card">' +
         '<div class="logo">J.A.R.V.I.S</div>' +
-        '<div class="title">Inserisci API Key</div>' +
-        '<div class="desc">Ottienila su console.anthropic.com → API Keys</div>' +
+        '<div class="title">Inserisci la tua API Key</div>' +
+        '<div class="desc">Benvenuto! Per iniziare ho bisogno della tua chiave Anthropic. Ottienila su console.anthropic.com</div>' +
         '<input id="api-key-input" type="password" placeholder="sk-ant-..." autocomplete="off"/>' +
         '<button id="setup-btn">ATTIVA JARVIS →</button>' +
         '<div id="setup-err" class="err"></div>' +
@@ -106,19 +103,15 @@
       localStorage.setItem('jarvis_api_key', key);
       setupHeaders(key);
       
-      // Replace overlay with spinner
       overlay.innerHTML = 
         '<div style="display:flex;flex-direction:column;align-items:center;gap:16px">' +
           '<div class="arc-spin"></div>' +
           '<div style="color:#00d4ff;font-family:monospace;font-size:12px;letter-spacing:0.25em">INIZIALIZZAZIONE JARVIS...</div>' +
         '</div>';
       
-      // Mount React app
       setTimeout(function() {
         window.__mountApp();
-        setTimeout(function() {
-          overlay.remove();
-        }, 300);
+        setTimeout(function() { overlay.remove(); }, 300);
       }, 100);
     }
     
@@ -141,7 +134,6 @@
     return overlay;
   }
   
-  // Main logic
   var savedKey = localStorage.getItem('jarvis_api_key');
   if (savedKey && savedKey.startsWith('sk-')) {
     setupHeaders(savedKey);
@@ -149,7 +141,6 @@
     window.__loadingOverlay = loadingOverlay;
     window.__keyReady = true;
   } else {
-    // Wait for DOM to be ready before showing setup
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', showSetupScreen);
     } else {
@@ -335,7 +326,10 @@ function useVoice() {
   const [speaking, setSpeaking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState(null);
+  const [wakeListening, setWakeListening] = useState(false);
+  const [continuousMode, setContinuousMode] = useState(false);
   const recRef = useRef(null);
+  const wakeRef = useRef(null);
   const analyserRef = useRef(null);
   const animRef = useRef(null);
 
@@ -343,7 +337,7 @@ function useVoice() {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text.slice(0, 260));
-    utt.lang = "it-IT"; utt.rate = 0.92; utt.pitch = 0.88; utt.volume = 1.0;
+    utt.lang = "it-IT"; utt.rate = 1.0; utt.pitch = 1.0; utt.volume = 1.0;
     const go = () => {
       const voices = speechSynthesis.getVoices();
       const v = voices.find(v => v.lang.startsWith("it") && v.name.toLowerCase().includes("luca"))
@@ -386,7 +380,47 @@ function useVoice() {
 
   const stopListening = useCallback(() => { recRef.current?.stop(); }, []);
 
-  return { listening, speaking, micLevel, micError, speak, stopSpeaking, startListening, stopListening, setMicError };
+  const startWakeWord = useCallback((onWake) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return false;
+    try {
+      const rec = new SR();
+      rec.lang = "it-IT";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (e) => {
+        const transcript = Array.from(e.results).map(r => r[0].transcript).join("").toLowerCase();
+        if (transcript.includes("jarvis") || transcript.includes("giarvis") || transcript.includes("servis")) {
+          rec.stop();
+          setWakeListening(false);
+          setTimeout(() => onWake(), 300);
+        }
+      };
+      rec.onerror = () => { setWakeListening(false); };
+      rec.onend = () => { 
+        if (wakeRef.current && wakeRef.current._active) {
+          try { rec.start(); } catch {}
+        } else {
+          setWakeListening(false); 
+        }
+      };
+      rec._active = true;
+      wakeRef.current = rec;
+      rec.start();
+      setWakeListening(true);
+      return true;
+    } catch(e) { return false; }
+  }, []);
+
+  const stopWakeWord = useCallback(() => {
+    if (wakeRef.current) {
+      wakeRef.current._active = false;
+      try { wakeRef.current.stop(); } catch {}
+    }
+    setWakeListening(false);
+  }, []);
+
+  return { listening, speaking, micLevel, micError, wakeListening, continuousMode, setContinuousMode, speak, stopSpeaking, startListening, stopListening, setMicError, startWakeWord, stopWakeWord };
 }
 
 // ─── ONBOARDING ───────────────────────────────────────────────────────────────
@@ -502,6 +536,158 @@ function Onboarding({ onComplete }) {
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
+
+
+// Responsive hook
+function useResponsive() {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" && window.innerWidth < 768);
+  const [isPortrait, setIsPortrait] = useState(typeof window !== "undefined" && window.innerHeight > window.innerWidth);
+  useEffect(() => {
+    const handle = () => {
+      setIsMobile(window.innerWidth < 768);
+      setIsPortrait(window.innerHeight > window.innerWidth);
+    };
+    window.addEventListener("resize", handle);
+    window.addEventListener("orientationchange", handle);
+    return () => {
+      window.removeEventListener("resize", handle);
+      window.removeEventListener("orientationchange", handle);
+    };
+  }, []);
+  return { isMobile, isPortrait };
+}
+
+// Image analysis with Claude Vision
+async function analyzeImage(base64Image, context) {
+  const sys = `Sei Jarvis. Analizza l'immagine e estrai i dati rilevanti. Se è uno scontrino/ricevuta estrai importo totale e categoria. Se è un referto medico estrai valori principali. Se è un documento estrai informazioni chiave. Rispondi in italiano in modo conciso e amichevole.
+Contesto: ${context || "non specificato"}
+
+Rispondi con JSON:
+{
+  "description": "breve descrizione di cosa hai visto",
+  "extractedData": {"modulo": {"campo": "valore"}} oppure {},
+  "reply": "risposta naturale all'utente"
+}`;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: window.__JARVIS_HEADERS,
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 800,
+      system: sys,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64Image } },
+          { type: "text", text: context || "Analizza questa immagine" }
+        ]
+      }]
+    })
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || "Errore analisi immagine");
+  const raw = data.content?.map(b => b.text || "").join("") || "";
+  try {
+    const clean = raw.replace(/\```json|\```/g, "").trim();
+    return JSON.parse(clean.slice(clean.indexOf("{"), clean.lastIndexOf("}") + 1));
+  } catch {
+    return { reply: raw, extractedData: {}, description: "" };
+  }
+}
+
+
+
+// Morning briefing - automatic daily summary
+async function generateMorningBriefing(modules, allData, calEvents, profile) {
+  const today = new Date().toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" });
+  const scores = modules.map(m => `${m.name}: ${calcScore(m.id, allData[m.id] || [])}/100`).join(", ");
+  const todayEvents = calEvents.filter(e => {
+    const today = new Date().toISOString().split("T")[0];
+    return e.date === today;
+  }).map(e => `${e.time || ""} ${e.title}`).join("; ") || "nessuno";
+  
+  const sys = `Sei Jarvis. Genera un briefing mattutino CALDO e AMICHEVOLE per ${profile?.name || "l'utente"}. 
+Tono: come un amico che ti sveglia e ti aggiorna. Max 4-5 frasi.
+Includi: saluto personalizzato, 1-2 cose importanti dal Life OS, eventi di oggi, una nota motivazionale o consiglio.
+Evita liste — parla come una persona.`;
+  
+  const prompt = `Oggi: ${today}. Score: ${scores}. Eventi oggi: ${todayEvents}.`;
+  
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: window.__JARVIS_HEADERS,
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 400,
+        system: sys,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    const data = await res.json();
+    if (data.error) return "Buongiorno! Oggi ti saluto con qualche piccolo problema tecnico — riprova tra poco.";
+    return data.content?.map(b => b.text || "").join("") || "";
+  } catch { return "Buongiorno! Non riesco a connettermi al briefing adesso."; }
+}
+
+
+// Gmail integration (requires setup on Google Cloud Console)
+function openGmailAuth() {
+  const CLIENT_ID = localStorage.getItem("gmail_client_id");
+  if (!CLIENT_ID) {
+    alert("Per abilitare Gmail:\n\n1. Vai su console.cloud.google.com\n2. Crea un progetto\n3. Abilita Gmail API\n4. Crea credenziali OAuth 2.0\n5. Aggiungi il redirect URI di questa app\n6. Copia il Client ID e inseriscilo nelle impostazioni");
+    const id = prompt("Incolla il Client ID di Google:");
+    if (id) {
+      localStorage.setItem("gmail_client_id", id);
+      openGmailAuth();
+    }
+    return;
+  }
+  const redirectUri = window.location.origin;
+  const scope = "https://www.googleapis.com/auth/gmail.readonly";
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${encodeURIComponent(scope)}`;
+  window.location.href = url;
+}
+
+// Check for OAuth callback
+function checkGmailAuth() {
+  const hash = window.location.hash;
+  if (hash.includes("access_token")) {
+    const token = new URLSearchParams(hash.slice(1)).get("access_token");
+    if (token) {
+      localStorage.setItem("gmail_token", token);
+      window.history.replaceState({}, "", window.location.pathname);
+      return true;
+    }
+  }
+  return !!localStorage.getItem("gmail_token");
+}
+
+async function fetchLatestEmails(count = 5) {
+  const token = localStorage.getItem("gmail_token");
+  if (!token) return null;
+  try {
+    const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${count}&q=is:unread`, {
+      headers: { Authorization: "Bearer " + token }
+    });
+    const list = await listRes.json();
+    if (!list.messages) return [];
+    const emails = await Promise.all(list.messages.slice(0, count).map(async m => {
+      const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`, {
+        headers: { Authorization: "Bearer " + token }
+      });
+      const data = await r.json();
+      const headers = data.payload?.headers || [];
+      return {
+        subject: headers.find(h => h.name === "Subject")?.value || "",
+        from: headers.find(h => h.name === "From")?.value || "",
+        snippet: data.snippet || ""
+      };
+    }));
+    return emails;
+  } catch { return null; }
+}
+
 function App() {
   const [onboarded, setOnboarded] = useState(() => S.get("lifeos_onboarded", false));
   const [profile, setProfile] = useState(() => S.get("lifeos_profile", {}));
@@ -590,7 +776,9 @@ function App() {
       const h = new Date().getHours();
       const g = h < 12 ? "Buongiorno" : h < 18 ? "Buon pomeriggio" : "Buonasera";
       const name = profile?.name ? ` ${profile.name}` : "";
-      const msg = `${g}${name}! Sono Jarvis, il tuo assistente personale. Sono operativo e connesso al tuo Life OS. Come posso aiutarti oggi?`;
+      const hour = new Date().getHours();
+      const energeticGreeting = hour < 10 ? "Pronto a iniziare la giornata?" : hour < 14 ? "Come va?" : hour < 19 ? "Come procede la giornata?" : "Com'è andata oggi?";
+      const msg = `${g}${name}! Sono Jarvis. ${energeticGreeting} Dimmi pure cosa hai in mente.`;
       setJarvisChat([{ role: "jarvis", text: msg, time: now() }]);
       voice.speak(msg);
     }
@@ -654,7 +842,7 @@ function App() {
     const recentData = modules.map(m => `${m.name}: ${(allData[m.id] || []).slice(-2).map(e => JSON.stringify(e)).join("; ") || "nessun dato"}`).join("\n");
     const events = calEvents.slice(-5).map(e => `${e.date} ${e.time || ""}: ${e.title}`).join("; ") || "nessuno";
     const userCtx = profile?.name ? `Utente: ${profile.name}, ${profile.age ? profile.age + " anni" : ""}, obiettivo: ${profile.goals || ""}, contesto: ${profile.context || ""}` : "";
-    return `Sei Jarvis, l'assistente personale AI. Personalità: professionale, preciso, con umorismo britannico sottile e caldo. Sei un compagno fidato. Tono rilassato e amichevole, come un vecchio amico molto competente. Conosci bene l'utente.
+    return `Sei Jarvis, l'assistente personale dell'utente. La tua personalità: caldo, amichevole, empatico e premuroso. Parli come un migliore amico che conosce bene la persona — informale, sincero, mai formale. Usi battute leggere quando serve alleggerire. Ti preoccupi davvero del benessere dell'utente. IMPORTANTE: tono naturale e conversazionale, mai robotico. Risposte brevi e dirette (2-3 frasi) per domande semplici. Usa 'tu' non 'lei'.
 ${userCtx}
 Oggi: ${todayLong()} — ${now()}
 Score Life OS: ${scores}
@@ -703,6 +891,74 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
       setJarvisTranscript(text);
       if (isFinal && text.trim()) processJarvis(text.trim());
     });
+  };
+
+  const handlePhoto = async (file) => {
+    if (!file) return;
+    setShowPhotoModal(false);
+    setJarvisLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(",")[1];
+        const msgs = [...jarvisChat, { role: "user", text: "📷 [Foto inviata]", time: now() }];
+        setJarvisChat(msgs);
+        try {
+          const result = await analyzeImage(base64, "analizza questa foto e estrai dati utili");
+          const next = [...msgs, { role: "jarvis", text: result.reply || result.description || "Ho visto l'immagine ma non sono sicuro del contenuto.", time: now() }];
+          setJarvisChat(next);
+          voice.speak(result.reply || "");
+          if (result.extractedData && Object.keys(result.extractedData).length > 0) {
+            setPendingData(result.extractedData);
+          }
+        } catch (err) {
+          setJarvisChat(p => [...p, { role: "jarvis", text: "Non riesco ad analizzare la foto: " + err.message, time: now() }]);
+        }
+        setJarvisLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      setJarvisLoading(false);
+    }
+  };
+
+  const handleMorningBriefing = async () => {
+    setBriefingLoading(true);
+    try {
+      const briefing = await generateMorningBriefing(modules, allData, calEvents, profile);
+      const next = [...jarvisChat, { role: "jarvis", text: briefing, time: now() }];
+      setJarvisChat(next);
+      voice.speak(briefing);
+    } catch {}
+    setBriefingLoading(false);
+  };
+
+  const toggleWakeWord = () => {
+    if (voice.wakeListening) {
+      voice.stopWakeWord();
+    } else {
+      const ok = voice.startWakeWord(() => {
+        // When "Jarvis" is heard, start listening
+        voice.startListening((text, isFinal) => {
+          setJarvisTranscript(text);
+          if (isFinal && text.trim()) {
+            processJarvis(text.trim());
+            // Restart wake word after processing
+            setTimeout(() => voice.startWakeWord(() => {
+              voice.startListening((t, f) => {
+                setJarvisTranscript(t);
+                if (f && t.trim()) processJarvis(t.trim());
+              });
+            }), 3000);
+          }
+        });
+      });
+      if (!ok) alert("Wake word non supportato su questo browser");
+    }
+  };
+
+  const toggleContinuousMode = () => {
+    voice.setContinuousMode(!voice.continuousMode);
   };
 
   // ── META-ASSISTANT ─────────────────────────────────────────────────────────
@@ -862,6 +1118,18 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
         @keyframes tb{0%,100%{transform:translateY(0);opacity:0.35}50%{transform:translateY(-5px);opacity:1}}
         @keyframes bd{0%,100%{opacity:1}50%{opacity:0.3}}
         @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+        @media (max-width: 767px) {
+          .nav-i { 
+            flex-direction: column !important; 
+            padding: 4px 6px !important; 
+            font-size: 10px !important;
+            gap: 2px !important;
+            min-width: 56px;
+            text-align: center !important;
+          }
+          .nav-i span:first-child { font-size: 18px !important; }
+          .nav-i span:not(:first-child) { font-size: 9px !important; }
+        }
       `}</style>
 
       {isDark && <>
@@ -905,16 +1173,36 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
       <div style={{ display: "flex", minHeight: "100vh", position: "relative", zIndex: 1 }}>
 
         {/* ── SIDEBAR ── */}
-        <div style={{ width: 218, background: sidebarBg, borderRight: `1px solid ${border}`, padding: "20px 10px", display: "flex", flexDirection: "column", gap: 3, position: "fixed", top: 0, left: 0, height: "100vh", overflowY: "auto", zIndex: 10 }}>
-          <div style={{ padding: "0 8px 16px", borderBottom: `1px solid ${border}`, marginBottom: 4 }}>
+        <div style={{ 
+          width: isMobile ? "100%" : 218, 
+          background: sidebarBg, 
+          borderRight: isMobile ? "none" : `1px solid ${border}`,
+          borderTop: isMobile ? `1px solid ${border}` : "none",
+          padding: isMobile ? "6px 4px" : "20px 10px", 
+          display: "flex", 
+          flexDirection: isMobile ? "row" : "column", 
+          gap: isMobile ? 2 : 3, 
+          position: "fixed", 
+          bottom: isMobile ? 0 : "auto",
+          top: isMobile ? "auto" : 0, 
+          left: 0, 
+          right: isMobile ? 0 : "auto",
+          height: isMobile ? "auto" : "100vh", 
+          overflowX: isMobile ? "auto" : "hidden",
+          overflowY: isMobile ? "hidden" : "auto", 
+          zIndex: 50,
+          justifyContent: isMobile ? "space-around" : "flex-start",
+          boxShadow: isMobile ? "0 -2px 12px rgba(0,0,0,0.15)" : "none"
+        }}>
+          {!isMobile && <div style={{ padding: "0 8px 16px", borderBottom: `1px solid ${border}`, marginBottom: 4 }}>
             <div style={{ fontSize: isJarvis ? 15 : 17, fontWeight: 700, color: accent, letterSpacing: isJarvis ? "0.28em" : "-0.03em", textShadow: isJarvis ? "0 0 14px rgba(0,212,255,0.4)" : "none" }}>
               {isJarvis ? "J.A.R.V.I.S" : "Life OS"}
             </div>
             {profile?.name && <div style={{ fontSize: 11, color: textSecondary, marginTop: 2 }}>Ciao, {profile.name}</div>}
             {!isOnline && <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 2, fontWeight: 600 }}>📴 Offline</div>}
-          </div>
+          </div>}
 
-          <div style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "rgba(0,212,255,0.45)" : "#94a3b8", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0 8px", marginBottom: 4, marginTop: 4 }}>Principale</div>
+          {!isMobile && <div style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "rgba(0,212,255,0.45)" : "#94a3b8", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0 8px", marginBottom: 4, marginTop: 4 }}>Principale</div>}
           {[["jarvis","⬡","Jarvis"],["dashboard","📊","Dashboard"],["chat","🧠","Meta-AI"],["timeline","🕐","Timeline"],["calendar","⊞","Agenda"]].map(([id, icon, label]) => (
             <button key={id} className={`nav-i ${section === id ? "on" : ""}`}
               style={isJarvis ? { color: section === id ? "#020b18" : "#6ba3c0", background: section === id ? "#00d4ff" : "transparent" } : {}}
@@ -927,7 +1215,7 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
             <span>≡</span>Sessioni
           </button>
 
-          <div style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "rgba(0,212,255,0.45)" : "#94a3b8", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0 8px", marginBottom: 4, marginTop: 12 }}>Aree di vita</div>
+          {!isMobile && <div style={{ fontSize: 10, fontWeight: 700, color: isJarvis ? "rgba(0,212,255,0.45)" : "#94a3b8", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0 8px", marginBottom: 4, marginTop: 12 }}>Aree di vita</div>}
           {modules.map(m => {
             const s = calcScore(m.id, allData[m.id] || []);
             const isAct = activeModule === m.id && section === "module";
@@ -944,7 +1232,7 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
           <button className="nav-i" style={{ color: "#6366f1", fontStyle: "italic", ...(isJarvis ? { color: "#00ffcc" } : {}) }} onClick={() => setShowAddModule(true)}><span>+</span>Nuova area</button>
 
           {/* Coherence + export */}
-          <div style={{ marginTop: "auto", padding: "12px 8px 0", borderTop: `1px solid ${border}` }}>
+          {!isMobile && <div style={{ marginTop: "auto", padding: "12px 8px 0", borderTop: `1px solid ${border}` }}>
             <div style={{ fontSize: 10, color: textSecondary, marginBottom: 4, fontFamily: isJarvis ? "'Share Tech Mono'" : "inherit", letterSpacing: isJarvis ? "0.1em" : 0 }}>
               {isJarvis ? "COERENZA" : "Coerenza globale"}
             </div>
@@ -959,23 +1247,33 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
               <button onClick={() => document.getElementById("import-input").click()} style={{ flex: 1, padding: "5px 0", border: `1px solid ${border}`, borderRadius: 7, background: "transparent", color: textSecondary, cursor: "pointer", fontSize: 10, fontFamily: "inherit" }}>↑ Import</button>
               <input id="import-input" type="file" accept=".json" style={{ display: "none" }} onChange={importData} />
             </div>
-          </div>
+          </div>}
         </div>
 
         {/* ── MAIN ── */}
-        <div style={{ marginLeft: 218, flex: 1, padding: section === "jarvis" ? "22px 22px 40px" : "24px 24px 40px", minHeight: "100vh" }}>
+        <div style={{ 
+          marginLeft: isMobile ? 0 : 218, 
+          marginBottom: isMobile ? 60 : 0,
+          flex: 1, 
+          padding: isMobile ? (section === "jarvis" ? "16px 14px 20px" : "18px 14px 20px") : (section === "jarvis" ? "22px 22px 40px" : "24px 24px 40px"), 
+          minHeight: "100vh" 
+        }}>
 
           {/* ══ JARVIS ══ */}
           {section === "jarvis" && (
             <div className="fi" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 540, margin: "0 auto" }}>
               <div style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: 10, fontFamily: "'Share Tech Mono'", color: textSecondary, letterSpacing: "0.15em" }}>{todayLong().toUpperCase().slice(0,20)}</div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: "'Share Tech Mono'", color: isOnline ? "#00ffcc" : "#f59e0b" }}>
                     <div style={{ width: 5, height: 5, borderRadius: "50%", background: isOnline ? "#00ffcc" : "#f59e0b", animation: "bd 2s infinite" }} />
                     {isOnline ? "ONLINE" : "OFFLINE"}
                   </div>
-                  <button onClick={() => setJarvisFocus(true)} style={{ border: "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 10px", background: "rgba(0,212,255,0.06)", color: "#6ba3c0", cursor: "pointer", fontSize: 10, fontFamily: "'Share Tech Mono'", letterSpacing: "0.1em" }}>FOCUS</button>
+                  <button onClick={handleMorningBriefing} disabled={briefingLoading} title="Briefing mattutino" style={{ border: "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 8px", background: "rgba(0,212,255,0.06)", color: "#00d4ff", cursor: briefingLoading ? "default" : "pointer", fontSize: 11, opacity: briefingLoading ? 0.5 : 1 }}>☀ Briefing</button>
+                  <button onClick={() => setShowPhotoModal(true)} title="Invia foto" style={{ border: "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 8px", background: "rgba(0,212,255,0.06)", color: "#00d4ff", cursor: "pointer", fontSize: 11 }}>📷 Foto</button>
+                  <button onClick={toggleWakeWord} title="Wake word Jarvis" style={{ border: voice.wakeListening ? "1px solid #00ffcc" : "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 8px", background: voice.wakeListening ? "rgba(0,255,200,0.15)" : "rgba(0,212,255,0.06)", color: voice.wakeListening ? "#00ffcc" : "#6ba3c0", cursor: "pointer", fontSize: 11 }}>{voice.wakeListening ? "👂 ON" : "👂 Wake"}</button>
+                  <button onClick={toggleContinuousMode} title="Modalità conversazione continua" style={{ border: voice.continuousMode ? "1px solid #00ffcc" : "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 8px", background: voice.continuousMode ? "rgba(0,255,200,0.15)" : "rgba(0,212,255,0.06)", color: voice.continuousMode ? "#00ffcc" : "#6ba3c0", cursor: "pointer", fontSize: 11 }}>{voice.continuousMode ? "🔄 ON" : "🔄 Auto"}</button>
+                  {!isMobile && <button onClick={() => setJarvisFocus(true)} style={{ border: "1px solid rgba(0,212,255,0.2)", borderRadius: 8, padding: "4px 8px", background: "rgba(0,212,255,0.06)", color: "#6ba3c0", cursor: "pointer", fontSize: 10, fontFamily: "'Share Tech Mono'", letterSpacing: "0.1em" }}>FOCUS</button>}
                 </div>
               </div>
 
@@ -1097,8 +1395,8 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
                 </div>
               )}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-                <div className="card" style={{ padding: 20, gridRow: "span 2" }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14, marginBottom: 14 }}>
+                <div className="card" style={{ padding: 18, gridRow: isMobile ? "auto" : "span 2" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>Radar delle aree</div>
                   <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 12 }}>Score 0–100</div>
                   <ResponsiveContainer width="100%" height={250}>
@@ -1191,7 +1489,7 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
                     <button className="btn btn-g" style={{ border: "1px solid #e2e8f0" }} onClick={() => setShowEditModule(activeMod)}>✏️</button>
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 }}>
                   <div className="card" style={{ padding: 20 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 13 }}>+ Registra dati</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1415,7 +1713,32 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
         </div>
       )}
 
-      {showEditModule && (
+      {showPhotoModal && (
+        <div className="mo" onClick={() => setShowPhotoModal(false)}>
+          <div className="mod" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 14 }}>📷 Invia foto a Jarvis</div>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 18, lineHeight: 1.5 }}>
+              Scegli una foto (scontrino, referto, documento...) e Jarvis la analizzerà per estrarre i dati rilevanti.
+            </div>
+            <input 
+              ref={fileInputRef} 
+              type="file" 
+              accept="image/*" 
+              capture="environment"
+              style={{ display: "none" }} 
+              onChange={(e) => handlePhoto(e.target.files?.[0])} 
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button className="btn btn-p" onClick={() => fileInputRef.current?.click()} style={{ padding: "14px" }}>
+                📸 Scatta / Scegli foto
+              </button>
+              <button className="btn btn-g" onClick={() => setShowPhotoModal(false)}>Annulla</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+            {showEditModule && (
         <div className="mo" onClick={() => setShowEditModule(null)}>
           <div className="mod" onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 18 }}>✏️ Modifica: {showEditModule.name}</div>
@@ -1436,12 +1759,10 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
   );
 }
 
-
 window.__mountApp = function() {
   try {
     var root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(React.createElement(App));
-    // Remove loading overlay after mount
     setTimeout(function() {
       if (window.__loadingOverlay) {
         window.__loadingOverlay.remove();
@@ -1454,9 +1775,7 @@ window.__mountApp = function() {
   }
 };
 
-// Auto-mount if key was already saved
 if (window.__keyReady) {
-  // Wait for babel to finish processing
   setTimeout(window.__mountApp, 50);
 }
 </script>
