@@ -11,7 +11,6 @@
   <link rel="manifest" href="/manifest.json"/>
   <title>J.A.R.V.I.S</title>
 
-  <!-- Dependencies in correct order -->
   <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
@@ -20,108 +19,146 @@
 
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{background:#020b18;min-height:100vh}
+    body{background:#020b18;min-height:100vh;font-family:system-ui,-apple-system,sans-serif}
     #root{min-height:100vh}
-    #loading{
+    #setup-overlay{
       position:fixed;inset:0;background:#020b18;
-      display:flex;flex-direction:column;
-      align-items:center;justify-content:center;
-      color:#00d4ff;font-family:'Share Tech Mono',monospace;
-      gap:20px;z-index:9999;
+      display:flex;align-items:center;justify-content:center;
+      padding:20px;z-index:99999;
     }
-    .arc{
+    #setup-overlay .card{
+      background:#041525;border:1px solid rgba(0,212,255,0.2);
+      border-radius:16px;padding:32px;width:100%;max-width:380px;
+      font-family:'Share Tech Mono',monospace;
+    }
+    #setup-overlay .logo{font-size:11px;letter-spacing:0.25em;color:#00d4ff;margin-bottom:8px}
+    #setup-overlay .title{font-size:18px;font-weight:700;color:#c8eeff;margin-bottom:6px}
+    #setup-overlay .desc{font-size:12px;color:#6ba3c0;margin-bottom:20px;line-height:1.5}
+    #setup-overlay input{
+      width:100%;background:rgba(0,212,255,0.04);
+      border:1px solid rgba(0,212,255,0.25);border-radius:8px;
+      padding:12px;color:#c8eeff;font-family:monospace;
+      font-size:13px;outline:none;margin-bottom:12px;
+    }
+    #setup-overlay button{
+      width:100%;background:rgba(0,212,255,0.15);
+      border:1px solid rgba(0,212,255,0.3);border-radius:8px;
+      padding:12px;color:#00d4ff;font-family:monospace;
+      font-size:13px;font-weight:700;cursor:pointer;letter-spacing:0.1em;
+    }
+    #setup-overlay .foot{font-size:10px;color:#6ba3c0;margin-top:12px;text-align:center}
+    #setup-overlay .err{
+      color:#ff6b35;font-size:11px;margin-top:8px;
+      padding:6px 10px;background:rgba(255,107,53,0.08);
+      border:1px solid rgba(255,107,53,0.2);border-radius:6px;
+      display:none;
+    }
+    .arc-spin{
       width:64px;height:64px;border-radius:50%;
       border:2px solid rgba(0,212,255,0.15);
       border-top:2px solid #00d4ff;
       animation:spin 1s linear infinite;
     }
     @keyframes spin{to{transform:rotate(360deg)}}
-    .load-text{font-size:12px;letter-spacing:0.25em;animation:pulse 2s ease-in-out infinite}
-    @keyframes pulse{0%,100%{opacity:0.5}50%{opacity:1}}
   </style>
 </head>
 <body>
-  <div id="loading">
-    <div class="arc"></div>
-    <div class="load-text">INIZIALIZZAZIONE JARVIS...</div>
-  </div>
-  <div id="root"></div>
 
-  <script>
-    function showError(msg) {
-      document.getElementById('loading').innerHTML = 
-        '<div style="color:#ff6b35;text-align:center;padding:30px;font-family:monospace">' +
-        '<div style="font-size:32px;margin-bottom:16px">⚠</div>' +
-        '<div style="font-size:14px;letter-spacing:0.1em">ERRORE DI AVVIO</div>' +
-        '<div style="font-size:11px;margin-top:10px;color:#888;max-width:300px">' + msg + '</div>' +
-        '</div>';
-      document.getElementById('loading').style.display = 'flex';
-    }
-    window.__appReady = function() {
-      var loading = document.getElementById('loading');
-      if (loading) loading.style.display = 'none';
+<div id="root"></div>
+
+<script>
+  // Setup screen logic — runs BEFORE React mounts
+  // React is only mounted after key is set
+  
+  function setupHeaders(key) {
+    window.__JARVIS_HEADERS = {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
     };
-
-    // API Key setup - check localStorage first
-    var savedKey = localStorage.getItem('jarvis_api_key');
-    if (savedKey) {
-      window.__JARVIS_KEY = savedKey;
-      window.__JARVIS_API = "https://api.anthropic.com/v1/messages";
-      window.__JARVIS_HEADERS = {
-        "Content-Type": "application/json",
-        "x-api-key": savedKey,
-        "anthropic-version": "2023-06-01"
-      };
-    } else {
-      // Show API key input before loading app
-      document.getElementById('loading').innerHTML = `
-        <div style="background:#041525;border:1px solid rgba(0,212,255,0.2);border-radius:16px;padding:32px;width:90%;max-width:380px;font-family:monospace">
-          <div style="font-size:11px;letter-spacing:0.25em;color:#00d4ff;margin-bottom:8px">J.A.R.V.I.S</div>
-          <div style="font-size:18px;font-weight:700;color:#c8eeff;margin-bottom:6px">Inserisci API Key</div>
-          <div style="font-size:12px;color:#6ba3c0;margin-bottom:20px;line-height:1.5">
-            Ottienila su console.anthropic.com → API Keys
-          </div>
-          <input id="api-key-input" type="password" placeholder="sk-ant-..." 
-            style="width:100%;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.25);border-radius:8px;padding:12px;color:#c8eeff;font-family:monospace;font-size:13px;outline:none;margin-bottom:12px"/>
-          <button onclick="saveApiKey()" 
-            style="width:100%;background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.3);border-radius:8px;padding:12px;color:#00d4ff;font-family:monospace;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:0.1em">
-            ATTIVA JARVIS →
-          </button>
-          <div style="font-size:10px;color:#6ba3c0;margin-top:12px;text-align:center">
-            La chiave viene salvata solo sul tuo dispositivo
-          </div>
-        </div>`;
-      document.getElementById('loading').style.display = 'flex';
-    }
-
-    function saveApiKey() {
-      var key = document.getElementById('api-key-input').value.trim();
-      if (!key || !key.startsWith('sk-')) {
-        alert('Inserisci una chiave API valida (inizia con sk-)');
-        return;
-      }
+  }
+  
+  function showSetupScreen() {
+    var overlay = document.createElement('div');
+    overlay.id = 'setup-overlay';
+    overlay.innerHTML = 
+      '<div class="card">' +
+        '<div class="logo">J.A.R.V.I.S</div>' +
+        '<div class="title">Inserisci API Key</div>' +
+        '<div class="desc">Ottienila su console.anthropic.com → API Keys</div>' +
+        '<input id="api-key-input" type="password" placeholder="sk-ant-..." autocomplete="off"/>' +
+        '<button id="setup-btn">ATTIVA JARVIS →</button>' +
+        '<div id="setup-err" class="err"></div>' +
+        '<div class="foot">La chiave viene salvata solo sul tuo dispositivo</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    
+    var input = document.getElementById('api-key-input');
+    var btn = document.getElementById('setup-btn');
+    var err = document.getElementById('setup-err');
+    
+    function attemptSave() {
+      var key = input.value.trim();
+      if (!key) { err.textContent = 'Inserisci la chiave'; err.style.display = 'block'; return; }
+      if (!key.startsWith('sk-')) { err.textContent = 'La chiave deve iniziare con sk-'; err.style.display = 'block'; return; }
+      
       localStorage.setItem('jarvis_api_key', key);
-      window.__JARVIS_KEY = key;
-      window.__JARVIS_API = "https://api.anthropic.com/v1/messages";
-      window.__JARVIS_HEADERS = {
-        "Content-Type": "application/json",
-        "x-api-key": key,
-        "anthropic-version": "2023-06-01"
-      };
-      document.getElementById('loading').innerHTML = `
-        <div class="arc"></div>
-        <div class="load-text">INIZIALIZZAZIONE JARVIS...</div>`;
-      // Trigger app load
-      loadApp();
+      setupHeaders(key);
+      
+      // Replace overlay with spinner
+      overlay.innerHTML = 
+        '<div style="display:flex;flex-direction:column;align-items:center;gap:16px">' +
+          '<div class="arc-spin"></div>' +
+          '<div style="color:#00d4ff;font-family:monospace;font-size:12px;letter-spacing:0.25em">INIZIALIZZAZIONE JARVIS...</div>' +
+        '</div>';
+      
+      // Mount React app
+      setTimeout(function() {
+        window.__mountApp();
+        setTimeout(function() {
+          overlay.remove();
+        }, 300);
+      }, 100);
     }
-
-    function loadApp() {
-      // App will be initialized by babel script
-      window.__JARVIS_READY = true;
+    
+    btn.addEventListener('click', attemptSave);
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') attemptSave();
+    });
+    input.focus();
+  }
+  
+  function showLoadingScreen() {
+    var overlay = document.createElement('div');
+    overlay.id = 'setup-overlay';
+    overlay.innerHTML = 
+      '<div style="display:flex;flex-direction:column;align-items:center;gap:16px">' +
+        '<div class="arc-spin"></div>' +
+        '<div style="color:#00d4ff;font-family:monospace;font-size:12px;letter-spacing:0.25em">INIZIALIZZAZIONE JARVIS...</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+  
+  // Main logic
+  var savedKey = localStorage.getItem('jarvis_api_key');
+  if (savedKey && savedKey.startsWith('sk-')) {
+    setupHeaders(savedKey);
+    var loadingOverlay = showLoadingScreen();
+    window.__loadingOverlay = loadingOverlay;
+    window.__keyReady = true;
+  } else {
+    // Wait for DOM to be ready before showing setup
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', showSetupScreen);
+    } else {
+      showSetupScreen();
     }
-  </script>
+  }
+</script>
 
-  <script type="text/babel">
+<script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } = Recharts;
 
@@ -251,27 +288,25 @@ function exportCSV(modId, entries, modName) {
 // ─── API ──────────────────────────────────────────────────────────────────────
 async function callAPI(system, userMsg, history = [], maxTokens = 1000) {
   const messages = [...history, { role: "user", content: userMsg }];
-  const endpoint = window.__JARVIS_API || "/api/chat";
-  const headers = window.__JARVIS_HEADERS || { "Content-Type": "application/json" };
-  const res = await fetch(window.__JARVIS_API || endpoint, {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: headers,
+    headers: window.__JARVIS_HEADERS,
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages })
   });
   const data = await res.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   return data.content?.map(b => b.text || "").join("") || "";
 }
 
 // Haiku - per agenti e insights (20x piu economico)
 async function callAPIFast(system, userMsg, maxTokens = 200) {
-  const endpoint2 = window.__JARVIS_API || "/api/chat";
-  const headers2 = window.__JARVIS_HEADERS || { "Content-Type": "application/json" };
-  const res = await fetch(window.__JARVIS_API || endpoint2, {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: headers2,
+    headers: window.__JARVIS_HEADERS,
     body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens, system, messages: [{ role: "user", content: userMsg }] })
   });
   const data = await res.json();
+  if (data.error) return "";
   return data.content?.map(b => b.text || "").join("") || "";
 }
 
@@ -653,11 +688,9 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
       if (result.extractedData && Object.keys(result.extractedData).length) setPendingData(result.extractedData);
       if (result.calendarEvent) setCalEvents(p => [...p, { ...result.calendarEvent, id: Date.now(), source: "Jarvis" }]);
       if (result.alert) setAlerts(p => [{ id: Date.now(), module: "Jarvis", icon: "⬡", color: "#00d4ff", text: result.alert, time: now(), read: false }, ...p].slice(0, 20));
-    } catch(err) {
-      const errMsg = err?.message || "Errore sconosciuto";
-      const next = [...msgs, { role: "jarvis", text: "Errore: " + errMsg + ". Controlla la chiave API su Vercel.", time: now() }];
+    } catch {
+      const next = [...msgs, { role: "jarvis", text: "Connessione persa. Riprova tra un momento.", time: now() }];
       setJarvisChat(next); saveSession(next);
-      console.error("Jarvis error:", err);
     }
     setJarvisLoading(false);
   };
@@ -688,10 +721,7 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
     try {
       const reply = await callAPI(buildMetaSystem(), msg, next.slice(-10).map(m => ({ role: m.role, content: m.content })).slice(0, -1));
       setMetaChat(p => [...p, { role: "assistant", content: reply }]);
-    } catch(err) { 
-      setMetaChat(p => [...p, { role: "assistant", content: "Errore: " + (err?.message || "connessione fallita") }]); 
-      console.error("Meta error:", err);
-    }
+    } catch { setMetaChat(p => [...p, { role: "assistant", content: "Errore di connessione." }]); }
     setLoading(false);
   };
 
@@ -1407,19 +1437,29 @@ Esempi estrazione: "ho corso 5km"→{"salute":{"allenamento":"Sì","note":"Corsa
 }
 
 
-try {
-  const root = ReactDOM.createRoot(document.getElementById('root'));
-  root.render(<React.StrictMode><App /></React.StrictMode>);
-  window.__appReady && window.__appReady();
-} catch(e) {
-  console.error('Mount error:', e);
-  document.getElementById('loading').style.display = 'flex';
-  document.getElementById('loading').innerHTML = 
-    '<div style="color:#ff6b35;text-align:center;padding:30px;font-family:monospace">' +
-    '<div style="font-size:32px;margin-bottom:16px">⚠</div>' +
-    '<div>ERRORE: ' + e.message.slice(0,80) + '</div>' +
-    '</div>';
+window.__mountApp = function() {
+  try {
+    var root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+    // Remove loading overlay after mount
+    setTimeout(function() {
+      if (window.__loadingOverlay) {
+        window.__loadingOverlay.remove();
+        window.__loadingOverlay = null;
+      }
+    }, 500);
+  } catch(e) {
+    console.error('Mount error:', e);
+    alert('Errore di avvio: ' + e.message);
+  }
+};
+
+// Auto-mount if key was already saved
+if (window.__keyReady) {
+  // Wait for babel to finish processing
+  setTimeout(window.__mountApp, 50);
 }
-  </script>
+</script>
+
 </body>
 </html>
