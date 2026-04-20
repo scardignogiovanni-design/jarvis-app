@@ -282,7 +282,7 @@ async function callAPI(system, userMsg, history = [], maxTokens = 1000) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: window.__JARVIS_HEADERS,
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages })
+    body: JSON.stringify({ model: "claude-sonnet-4-5-20250929", max_tokens: maxTokens, system, messages })
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
@@ -572,7 +572,7 @@ Rispondi con JSON:
     method: "POST",
     headers: window.__JARVIS_HEADERS,
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20250929",
       max_tokens: 800,
       system: sys,
       messages: [{
@@ -618,7 +618,7 @@ Evita liste — parla come una persona.`;
       method: "POST",
       headers: window.__JARVIS_HEADERS,
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 400,
         system: sys,
         messages: [{ role: "user", content: prompt }]
