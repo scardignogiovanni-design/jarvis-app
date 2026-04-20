@@ -48,11 +48,6 @@
   <div id="root"></div>
 
   <script>
-    // Safety check - verify all deps loaded
-    window.addEventListener('load', function() {
-      if (!window.React) { showError('React non caricato'); return; }
-      if (!window.Recharts) { showError('Recharts non caricato'); return; }
-    });
     function showError(msg) {
       document.getElementById('loading').innerHTML = 
         '<div style="color:#ff6b35;text-align:center;padding:30px;font-family:monospace">' +
@@ -60,11 +55,70 @@
         '<div style="font-size:14px;letter-spacing:0.1em">ERRORE DI AVVIO</div>' +
         '<div style="font-size:11px;margin-top:10px;color:#888;max-width:300px">' + msg + '</div>' +
         '</div>';
+      document.getElementById('loading').style.display = 'flex';
     }
     window.__appReady = function() {
       var loading = document.getElementById('loading');
       if (loading) loading.style.display = 'none';
     };
+
+    // API Key setup - check localStorage first
+    var savedKey = localStorage.getItem('jarvis_api_key');
+    if (savedKey) {
+      window.__JARVIS_KEY = savedKey;
+      window.__JARVIS_API = "https://api.anthropic.com/v1/messages";
+      window.__JARVIS_HEADERS = {
+        "Content-Type": "application/json",
+        "x-api-key": savedKey,
+        "anthropic-version": "2023-06-01"
+      };
+    } else {
+      // Show API key input before loading app
+      document.getElementById('loading').innerHTML = `
+        <div style="background:#041525;border:1px solid rgba(0,212,255,0.2);border-radius:16px;padding:32px;width:90%;max-width:380px;font-family:monospace">
+          <div style="font-size:11px;letter-spacing:0.25em;color:#00d4ff;margin-bottom:8px">J.A.R.V.I.S</div>
+          <div style="font-size:18px;font-weight:700;color:#c8eeff;margin-bottom:6px">Inserisci API Key</div>
+          <div style="font-size:12px;color:#6ba3c0;margin-bottom:20px;line-height:1.5">
+            Ottienila su console.anthropic.com → API Keys
+          </div>
+          <input id="api-key-input" type="password" placeholder="sk-ant-..." 
+            style="width:100%;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.25);border-radius:8px;padding:12px;color:#c8eeff;font-family:monospace;font-size:13px;outline:none;margin-bottom:12px"/>
+          <button onclick="saveApiKey()" 
+            style="width:100%;background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.3);border-radius:8px;padding:12px;color:#00d4ff;font-family:monospace;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:0.1em">
+            ATTIVA JARVIS →
+          </button>
+          <div style="font-size:10px;color:#6ba3c0;margin-top:12px;text-align:center">
+            La chiave viene salvata solo sul tuo dispositivo
+          </div>
+        </div>`;
+      document.getElementById('loading').style.display = 'flex';
+    }
+
+    function saveApiKey() {
+      var key = document.getElementById('api-key-input').value.trim();
+      if (!key || !key.startsWith('sk-')) {
+        alert('Inserisci una chiave API valida (inizia con sk-)');
+        return;
+      }
+      localStorage.setItem('jarvis_api_key', key);
+      window.__JARVIS_KEY = key;
+      window.__JARVIS_API = "https://api.anthropic.com/v1/messages";
+      window.__JARVIS_HEADERS = {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01"
+      };
+      document.getElementById('loading').innerHTML = `
+        <div class="arc"></div>
+        <div class="load-text">INIZIALIZZAZIONE JARVIS...</div>`;
+      // Trigger app load
+      loadApp();
+    }
+
+    function loadApp() {
+      // App will be initialized by babel script
+      window.__JARVIS_READY = true;
+    }
   </script>
 
   <script type="text/babel">
@@ -197,13 +251,11 @@ function exportCSV(modId, entries, modName) {
 // ─── API ──────────────────────────────────────────────────────────────────────
 async function callAPI(system, userMsg, history = [], maxTokens = 1000) {
   const messages = [...history, { role: "user", content: userMsg }];
-  const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  const endpoint = isLocal 
-    ? "https://api.anthropic.com/v1/messages"
-    : "/api/chat";
-  const res = await fetch(endpoint, {
+  const endpoint = window.__JARVIS_API || "/api/chat";
+  const headers = window.__JARVIS_HEADERS || { "Content-Type": "application/json" };
+  const res = await fetch(window.__JARVIS_API || endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: headers,
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: maxTokens, system, messages })
   });
   const data = await res.json();
@@ -212,13 +264,11 @@ async function callAPI(system, userMsg, history = [], maxTokens = 1000) {
 
 // Haiku - per agenti e insights (20x piu economico)
 async function callAPIFast(system, userMsg, maxTokens = 200) {
-  const isLocal2 = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  const endpoint2 = isLocal2 
-    ? "https://api.anthropic.com/v1/messages"
-    : "/api/chat";
-  const res = await fetch(endpoint2, {
+  const endpoint2 = window.__JARVIS_API || "/api/chat";
+  const headers2 = window.__JARVIS_HEADERS || { "Content-Type": "application/json" };
+  const res = await fetch(window.__JARVIS_API || endpoint2, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: headers2,
     body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: maxTokens, system, messages: [{ role: "user", content: userMsg }] })
   });
   const data = await res.json();
